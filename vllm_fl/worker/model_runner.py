@@ -20,6 +20,7 @@ import torch
 import torch.distributed
 import torch.nn as nn
 from tqdm import tqdm
+import flag_gems
 
 import vllm.envs as envs
 from vllm.attention.backends.abstract import(
@@ -4630,62 +4631,124 @@ class ModelRunnerFL(
             and cudagraph_runtime_mode.valid_runtime_modes()
         ), f"Invalid cudagraph runtime mode: {cudagraph_runtime_mode}"
 
-        # Only rank 0 should print progress bar during capture
-        if is_global_first_rank():
-            compilation_cases = tqdm(
-                compilation_cases,
-                disable=not self.load_config.use_tqdm_on_load,
-                desc="Capturing CUDA graphs ({}, {})".format(
-                    "decode" if uniform_decode else "mixed prefill-decode",
-                    cudagraph_runtime_mode.name,
-                ),
-            )
+        if cudagraph_runtime_mode == CUDAGraphMode.FULL:
+            # Enable flag_gems temporarily
+            with flag_gems.use_gems():
 
-        # We skip EPLB here since we don't want to record dummy metrics
-        for num_tokens, activate_lora in compilation_cases:
-            # We currently only capture ubatched graphs when its a FULL
-            # cudagraph, a uniform decode batch, and the number of tokens
-            # is above the threshold. Otherwise we just capture a non-ubatched
-            # version of the graph
-            allow_microbatching = (
-                self.parallel_config.enable_dbo
-                and cudagraph_runtime_mode == CUDAGraphMode.FULL
-                and uniform_decode
-                and check_ubatch_thresholds(
-                    config=self.vllm_config.parallel_config,
-                    num_tokens=num_tokens,
-                    uniform_decode=uniform_decode,
+                # Only rank 0 should print progress bar during capture
+                if is_global_first_rank():
+                    compilation_cases = tqdm(
+                        compilation_cases,
+                        disable=not self.load_config.use_tqdm_on_load,
+                        desc="Capturing CUDA graphs ({}, {})".format(
+                            "decode" if uniform_decode else "mixed prefill-decode",
+                            cudagraph_runtime_mode.name,
+                        ),
+                    )
+
+                # We skip EPLB here since we don't want to record dummy metrics
+                for num_tokens, activate_lora in compilation_cases:
+                    # We currently only capture ubatched graphs when its a FULL
+                    # cudagraph, a uniform decode batch, and the number of tokens
+                    # is above the threshold. Otherwise we just capture a non-ubatched
+                    # version of the graph
+                    allow_microbatching = (
+                        self.parallel_config.enable_dbo
+                        and cudagraph_runtime_mode == CUDAGraphMode.FULL
+                        and uniform_decode
+                        and check_ubatch_thresholds(
+                            config=self.vllm_config.parallel_config,
+                            num_tokens=num_tokens,
+                            uniform_decode=uniform_decode,
+                        )
+                    )
+
+                    for _ in range(self.compilation_config.cudagraph_num_of_warmups):
+                        # Use CUDAGraphRuntimeStyle.NONE (default) for warmup.
+                        # But be careful, warm up with `NONE`is orthogonal to
+                        # if we want to warm up attention or not. This is
+                        # different from the case where `FULL` implies capture
+                        # attention while `PIECEWISE` implies no attention.
+                        force_attention = cudagraph_runtime_mode == CUDAGraphMode.FULL
+                        self._dummy_run(
+                            num_tokens,
+                            cudagraph_runtime_mode=CUDAGraphMode.NONE,
+                            force_attention=force_attention,
+                            uniform_decode=uniform_decode,
+                            allow_microbatching=allow_microbatching,
+                            skip_eplb=True,
+                            remove_lora=False,
+                            activate_lora=activate_lora,
+                        )
+                    self._dummy_run(
+                        num_tokens,
+                        cudagraph_runtime_mode=cudagraph_runtime_mode,
+                        uniform_decode=uniform_decode,
+                        allow_microbatching=allow_microbatching,
+                        skip_eplb=True,
+                        remove_lora=False,
+                        activate_lora=activate_lora,
+                        is_graph_capturing=True,
+                    )
+                self.maybe_remove_all_loras(self.lora_config)
+        else:
+            # Only rank 0 should print progress bar during capture
+            if is_global_first_rank():
+                compilation_cases = tqdm(
+                    compilation_cases,
+                    disable=not self.load_config.use_tqdm_on_load,
+                    desc="Capturing CUDA graphs ({}, {})".format(
+                        "decode" if uniform_decode else "mixed prefill-decode",
+                        cudagraph_runtime_mode.name,
+                    ),
                 )
-            )
 
-            for _ in range(self.compilation_config.cudagraph_num_of_warmups):
-                # Use CUDAGraphRuntimeStyle.NONE (default) for warmup.
-                # But be careful, warm up with `NONE`is orthogonal to
-                # if we want to warm up attention or not. This is
-                # different from the case where `FULL` implies capture
-                # attention while `PIECEWISE` implies no attention.
-                force_attention = cudagraph_runtime_mode == CUDAGraphMode.FULL
+            # We skip EPLB here since we don't want to record dummy metrics
+            for num_tokens, activate_lora in compilation_cases:
+                # We currently only capture ubatched graphs when its a FULL
+                # cudagraph, a uniform decode batch, and the number of tokens
+                # is above the threshold. Otherwise we just capture a non-ubatched
+                # version of the graph
+                allow_microbatching = (
+                    self.parallel_config.enable_dbo
+                    and cudagraph_runtime_mode == CUDAGraphMode.FULL
+                    and uniform_decode
+                    and check_ubatch_thresholds(
+                        config=self.vllm_config.parallel_config,
+                        num_tokens=num_tokens,
+                        uniform_decode=uniform_decode,
+                    )
+                )
+
+                for _ in range(self.compilation_config.cudagraph_num_of_warmups):
+                    # Use CUDAGraphRuntimeStyle.NONE (default) for warmup.
+                    # But be careful, warm up with `NONE`is orthogonal to
+                    # if we want to warm up attention or not. This is
+                    # different from the case where `FULL` implies capture
+                    # attention while `PIECEWISE` implies no attention.
+                    force_attention = cudagraph_runtime_mode == CUDAGraphMode.FULL
+                    self._dummy_run(
+                        num_tokens,
+                        cudagraph_runtime_mode=CUDAGraphMode.NONE,
+                        force_attention=force_attention,
+                        uniform_decode=uniform_decode,
+                        allow_microbatching=allow_microbatching,
+                        skip_eplb=True,
+                        remove_lora=False,
+                        activate_lora=activate_lora,
+                    )
                 self._dummy_run(
                     num_tokens,
-                    cudagraph_runtime_mode=CUDAGraphMode.NONE,
-                    force_attention=force_attention,
+                    cudagraph_runtime_mode=cudagraph_runtime_mode,
                     uniform_decode=uniform_decode,
                     allow_microbatching=allow_microbatching,
                     skip_eplb=True,
                     remove_lora=False,
                     activate_lora=activate_lora,
+                    is_graph_capturing=True,
                 )
-            self._dummy_run(
-                num_tokens,
-                cudagraph_runtime_mode=cudagraph_runtime_mode,
-                uniform_decode=uniform_decode,
-                allow_microbatching=allow_microbatching,
-                skip_eplb=True,
-                remove_lora=False,
-                activate_lora=activate_lora,
-                is_graph_capturing=True,
-            )
-        self.maybe_remove_all_loras(self.lora_config)
+            self.maybe_remove_all_loras(self.lora_config)
+
 
     def initialize_attn_backend(self, kv_cache_config: KVCacheConfig) -> None:
         """
