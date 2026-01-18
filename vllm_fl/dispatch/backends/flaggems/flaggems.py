@@ -27,13 +27,13 @@ class FlagGemsBackend(Backend):
 
     @property
     def name(self) -> str:
-        return "flaggems"
+        return "flagos"
 
     def is_available(self) -> bool:
         """Check if FlagGems is available."""
         if FlagGemsBackend._available is None:
             try:
-                import flag_gems
+                import flag_gems  # noqa F401
 
                 FlagGemsBackend._available = True
             except ImportError:
@@ -56,7 +56,7 @@ class FlagGemsBackend(Backend):
 
         return silu_and_mul_flaggems(x)
 
-    def rmsnorm(
+    def rms_norm(
         self,
         x: torch.Tensor,
         residual: Optional[torch.Tensor],
@@ -75,9 +75,9 @@ class FlagGemsBackend(Backend):
         Returns:
             Normalized tensor, or tuple of (normalized, residual) if residual is provided
         """
-        from .impl.normalization import rmsnorm_flaggems
+        from .impl.normalization import rms_norm_flaggems
 
-        return rmsnorm_flaggems(x, residual, weight, epsilon)
+        return rms_norm_flaggems(x, residual, weight, epsilon)
 
     def rotary_embedding(
         self,

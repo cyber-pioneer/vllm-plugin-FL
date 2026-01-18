@@ -10,16 +10,19 @@ import contextvars
 import logging
 import os
 import threading
+import yaml
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
-import yaml
+
+from vllm_fl.utils import get_op_config
+
 
 logger = logging.getLogger(__name__)
 
 
 # Valid preference values for VLLM_FL_PREFER
-PREFER_DEFAULT = "flaggems"
+PREFER_DEFAULT = "flagos"
 PREFER_VENDOR = "vendor"
 PREFER_REFERENCE = "reference"
 
@@ -33,7 +36,7 @@ class SelectionPolicy:
 
     Attributes:
         prefer: Which implementation kind to prefer. One of:
-            - "flaggems": Prefer DEFAULT (FlagGems) implementations
+            - "flagos": Prefer DEFAULT (FlagOS) implementations
             - "vendor": Prefer VENDOR (CUDA) implementations
             - "reference": Prefer REFERENCE (PyTorch) implementations
         strict: If True, raise error when primary implementation fails
@@ -92,11 +95,11 @@ class SelectionPolicy:
     def get_default_order(self) -> List[str]:
         """Get the default selection order based on preference setting."""
         if self.prefer == PREFER_REFERENCE:
-            return ["reference", "flaggems", "vendor"]
+            return ["reference", "flagos", "vendor"]
         elif self.prefer == PREFER_VENDOR:
-            return ["vendor", "flaggems", "reference"]
+            return ["vendor", "flagos", "reference"]
         else:  # PREFER_DEFAULT
-            return ["flaggems", "vendor", "reference"]
+            return ["flagos", "vendor", "reference"]
 
     def is_vendor_allowed(self, vendor_name: str) -> bool:
         """Check if a vendor is allowed by this policy."""
@@ -259,7 +262,10 @@ class PolicyManager:
             ValueError: If the config file cannot be parsed.
 
         Config file format (YAML):
-            # Preferred backend type: flaggems, vendor, or reference
+            # Optional action for tooling (e.g., auto_tune)
+            action: auto_tune
+
+            # Preferred backend type: flagos, vendor, or reference
             prefer: vendor
 
             # Strict mode:
@@ -280,20 +286,20 @@ class PolicyManager:
             # If you only list 2 options, only those 2 will be attempted.
             #
             # Supported tokens:
-            #   - flaggems      : FlagGems default implementation
+            #   - flagos        : FlagOS default implementation
             #   - reference     : PyTorch reference implementation
             #   - vendor        : Any available vendor backend (auto-detect)
             #   - vendor:cuda   : Only CUDA vendor backend
             #   - vendor:ascend : Only Ascend vendor backend
             op_backends:
-              rmsnorm:
+              rms_norm:
                 - vendor        # Try any available vendor first
-                - flaggems      # Then try flaggems
+                - flagos        # Then try flagos
                 # reference not listed, so it won't be used
 
               silu_and_mul:
                 - vendor:cuda   # Only try CUDA, not other vendors
-                - flaggems
+                - flagos
                 - reference
         """
         if not os.path.isfile(config_path):
@@ -341,7 +347,7 @@ class PolicyManager:
                 if isinstance(order, list):
                     per_op_order[str(op_name)] = [str(o).strip() for o in order if o]
                 elif isinstance(order, str):
-                    # Support string format: "vendor:cuda|flaggems"
+                    # Support string format: "vendor:cuda|flagos"
                     per_op_order[str(op_name)] = [
                         o.strip() for o in order.split("|") if o.strip()
                     ]
@@ -356,6 +362,17 @@ class PolicyManager:
             allow_vendors=allow_vendors,
         )
 
+    @staticmethod
+    def _parse_op_config(value: Dict[str, str]) -> Dict[str, List[str]]:
+        """Parse op config dict into per-op order."""
+        result: Dict[str, List[str]] = {}
+        for op_name, backend in value.items():
+            key = backend.strip().lower()
+            if key not in VALID_PREFER_VALUES:
+                raise ValueError(f"Unsupported backend '{backend}' for op '{op_name}'.")
+            result[op_name] = [key]
+        return result
+
     def _policy_from_env(self) -> SelectionPolicy:
         """
         Create a SelectionPolicy from configuration file or environment variables.
@@ -367,7 +384,7 @@ class PolicyManager:
 
         Environment variables:
         - VLLM_FL_CONFIG: Path to YAML configuration file
-        - VLLM_FL_PREFER: Preference (flaggems, vendor, reference)
+        - VLLM_FL_PREFER: Preference (flagos, vendor, reference)
         - VLLM_FL_STRICT: Enable strict mode (1 or 0)
         - VLLM_FL_DENY_VENDORS: Comma-separated list of denied vendors
         - VLLM_FL_ALLOW_VENDORS: Comma-separated list of allowed vendors
@@ -393,13 +410,17 @@ class PolicyManager:
         allow_str = os.environ.get("VLLM_FL_ALLOW_VENDORS", "").strip()
         allow_vendors = self._parse_csv_set(allow_str) if allow_str else None
 
-        per_op_str = os.environ.get("VLLM_FL_PER_OP", "").strip()
-        per_op_order = self._parse_per_op(per_op_str) if per_op_str else None
+        op_config = get_op_config()
+        if op_config:
+            env_per_op = self._parse_op_config(op_config)
+        else:
+            per_op_str = os.environ.get("VLLM_FL_PER_OP", "").strip()
+            env_per_op = self._parse_per_op(per_op_str) if per_op_str else None
 
         return SelectionPolicy.from_dict(
             prefer=prefer_str,
             strict=strict,
-            per_op_order=per_op_order,
+            per_op_order=env_per_op,
             deny_vendors=deny_vendors,
             allow_vendors=allow_vendors,
         )
@@ -472,7 +493,7 @@ def policy_from_config(config_path: str) -> SelectionPolicy:
         ValueError: If the config file cannot be parsed.
 
     Example config file (YAML):
-        # Preferred backend type: flaggems, vendor, or reference
+        # Preferred backend type: flagos, vendor, or reference
         prefer: vendor
 
         # Strict mode: true = fail immediately on error, false = try next backend
@@ -491,20 +512,20 @@ def policy_from_config(config_path: str) -> SelectionPolicy:
         # If you only list 2 options, only those 2 will be attempted.
         #
         # Supported tokens:
-        #   - flaggems      : FlagGems default implementation
+        #   - flagos        : FlagOS default implementation
         #   - reference     : PyTorch reference implementation
         #   - vendor        : Any available vendor backend (auto-detect)
         #   - vendor:cuda   : Only CUDA vendor backend
         #   - vendor:ascend : Only Ascend vendor backend
         op_backends:
-          rmsnorm:
+          rms_norm:
             - vendor        # Try any available vendor first
-            - flaggems      # Then try flaggems
-            # reference not listed, so it won't be used for rmsnorm
+            - flagos        # Then try flagos
+            # reference not listed, so it won't be used for rms_norm
 
           silu_and_mul:
             - vendor:cuda   # Only try CUDA, not other vendors
-            - flaggems
+            - flagos
             - reference
     """
     return PolicyManager.get_instance()._policy_from_config(config_path)
@@ -541,7 +562,7 @@ def with_preference(prefer: str) -> _PolicyContext:
     Context manager to set implementation preference.
 
     Args:
-        prefer: One of "flaggems", "vendor", or "reference"
+        prefer: One of "flagos", "vendor", or "reference"
 
     Example:
         >>> with with_preference("vendor"):

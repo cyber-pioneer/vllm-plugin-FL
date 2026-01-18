@@ -54,8 +54,8 @@ dispatch/
 ### 2. Operator Implementation (OpImpl)
 
 Each operator implementation contains:
-- `op_name`: Operator name (e.g., "silu_and_mul", "rmsnorm")
-- `impl_id`: Unique implementation identifier (e.g., "default.flaggems")
+- `op_name`: Operator name (e.g., "silu_and_mul", "rms_norm")
+- `impl_id`: Unique implementation identifier (e.g., "default.flagos")
 - `kind`: Implementation type
 - `fn`: Actual implementation function
 - `vendor`: Vendor name (required for VENDOR type)
@@ -77,7 +77,7 @@ Policy controls operator implementation selection:
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         User Code                                │
-│                  call_op("rmsnorm", x, ...)                      │
+│                 call_op("rms_norm", x, ...)                      │
 └────────────────────────────┬────────────────────────────────────┘
                              │
                              ▼
@@ -108,7 +108,7 @@ Policy controls operator implementation selection:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    VLLM_FL_PREFER=flaggems                       │
+│                     VLLM_FL_PREFER=flagos                       │
 │                    (Default Behavior)                            │
 └─────────────────────────────────────────────────────────────────┘
                              │
@@ -171,7 +171,7 @@ from vllm_fl.dispatch import call_op, resolve_op
 result = call_op("silu_and_mul", x)
 
 # Method 2: Resolve first, then call
-fn = resolve_op("rmsnorm")
+fn = resolve_op("rms_norm")
 result = fn(x, residual, weight, epsilon)
 ```
 
@@ -211,7 +211,7 @@ export VLLM_FL_CONFIG=/path/to/vllm_fl_dispatch.yaml
 ```yaml
 # vllm_fl_dispatch.yaml
 
-# Preferred backend type: flaggems, vendor, or reference
+# Preferred backend type: flagos, vendor, or reference
 prefer: vendor
 
 # Strict mode:
@@ -232,20 +232,20 @@ deny_vendors:
 # If you only list 2 options, only those 2 will be attempted.
 #
 # Supported tokens:
-#   - flaggems      : FlagGems default implementation
+#   - flagos        : FlagOS default implementation
 #   - reference     : PyTorch reference implementation
 #   - vendor        : Any available vendor backend (auto-detect)
 #   - vendor:cuda   : Only CUDA vendor backend
 #   - vendor:ascend : Only Ascend vendor backend
 op_backends:
-  rmsnorm:
+  rms_norm:
     - vendor        # Try any available vendor first
-    - flaggems      # Then try flaggems
-    # reference not listed, so it won't be used for rmsnorm
+    - flagos        # Then try flagos
+    # reference not listed, so it won't be used for rms_norm
 
   silu_and_mul:
     - vendor:cuda   # Only try CUDA, not other vendors
-    - flaggems
+    - flagos
     - reference
 ```
 
@@ -253,7 +253,7 @@ op_backends:
 
 | Token | Description |
 |-------|-------------|
-| `flaggems` | FlagGems default implementation |
+| `flagos` | FlagOS default implementation |
 | `reference` | PyTorch reference implementation |
 | `vendor` | Any available vendor backend (auto-detects hardware) |
 | `vendor:cuda` | Only CUDA vendor backend |
@@ -261,12 +261,16 @@ op_backends:
 
 **Note**: When using `vendor` (without specifying a vendor name), the system automatically selects an available vendor backend based on hardware detection.
 
+<a id="environment-variables"></a>
 ### Environment Variables
 
 | Variable | Description | Example | Behavior |
 |----------|-------------|---------|----------|
 | `VLLM_FL_CONFIG` | Path to YAML config file | `/path/to/config.yaml` | Highest priority, overrides other env vars |
-| `VLLM_FL_PREFER` | Preferred backend (sets selection order) | `flaggems`, `vendor`, `reference` | Defines priority order, falls back if unavailable |
+| `VLLM_FL_PREFER` | Preferred backend (sets selection order) | `flagos`, `vendor`, `reference` | Defines priority order, falls back if unavailable |
+| `VLLM_FL_PREFER_ENABLED` | Global backend switch | `true` or `false` | Default `true`, `false` disables all backends to keep native vllm |
+| `VLLM_FL_FLAGOS_WHITELIST` | FlagGems ops to enable | `silu_and_mul,rms_norm` | Only these ops are enabled |
+| `VLLM_FL_FLAGOS_BLACKLIST` | FlagGems ops to disable | `rotary_embedding` | Disabled even if otherwise selected |
 | `VLLM_FL_STRICT` | Enable strict mode (auto-fallback on failure) | `1` or `0` | When `1`, tries alternatives if primary fails |
 | `VLLM_FL_DENY_VENDORS` | Denied vendors list (blacklist) | `vendor1,vendor2` | Excludes specified vendors from selection |
 | `VLLM_FL_ALLOW_VENDORS` | Allowed vendors whitelist | `vendor1,vendor2` | Only allows specified vendors (if set) |
@@ -278,7 +282,7 @@ op_backends:
 
 ```bash
 # Prefer FlagGems implementation
-export VLLM_FL_PREFER=flaggems
+export VLLM_FL_PREFER=flagos
 
 # Enable strict mode (auto-fallback on failure)
 export VLLM_FL_STRICT=1
@@ -287,13 +291,25 @@ export VLLM_FL_STRICT=1
 export VLLM_FL_DENY_VENDORS=vendor_a,vendor_b
 
 # Specify selection order for specific operator
-export VLLM_FL_PER_OP="rmsnorm=vendor|flaggems|reference"
+export VLLM_FL_PER_OP="rms_norm=vendor|flagos|reference"
 
 # Load external plugins
 export VLLM_FL_PLUGIN_MODULES=my_custom_backend
 
 # Set log level
 export VLLM_FL_LOG_LEVEL=DEBUG
+```
+
+#### Op Backends Selection Example
+
+```yaml
+op_backends:
+  mul:
+    - flagos
+  silu_and_mul:
+    - flagos
+    - vendor
+    - reference
 ```
 
 ### Configuration Priority
@@ -315,14 +331,14 @@ The dispatch system applies configuration in the following order:
 #### Example: Combined Environment Variables
 
 ```bash
-export VLLM_FL_PREFER=flaggems                    # Default: flaggems → vendor → reference
+export VLLM_FL_PREFER=flagos                      # Default: flagos → vendor → reference
 export VLLM_FL_DENY_VENDORS=vendor_a              # Exclude vendor_a
-export VLLM_FL_PER_OP="rmsnorm=vendor|reference"  # Override for rmsnorm only
+export VLLM_FL_PER_OP="rms_norm=vendor|reference"  # Override for rms_norm only
 ```
 
 **Result:**
-- **`rmsnorm` operator**: Uses `vendor → reference` order (PER_OP overrides PREFER), excluding vendor_a
-- **Other operators** (e.g., `silu_and_mul`): Uses `flaggems → vendor → reference` order (from PREFER), excluding vendor_a
+- **`rms_norm` operator**: Uses `vendor → reference` order (PER_OP overrides PREFER), excluding vendor_a
+- **Other operators** (e.g., `silu_and_mul`): Uses `flagos → vendor → reference` order (from PREFER), excluding vendor_a
 
 #### Important Notes
 
@@ -348,7 +364,7 @@ with with_strict_mode():
 
 # Temporarily switch preferred backend
 with with_preference("reference"):
-    result = call_op("rmsnorm", x, residual, weight, epsilon)
+    result = call_op("rms_norm", x, residual, weight, epsilon)
 
 # Temporarily restrict allowed vendors
 with with_allowed_vendors("vendor_a"):
@@ -362,7 +378,7 @@ Currently supported operators:
 | Operator | Description | FlagGems | Reference | Vendor |
 |----------|-------------|----------|-----------|--------|
 | `silu_and_mul` | SiLU activation + element-wise multiplication | ✓ | ✓ | ✓ |
-| `rmsnorm` | RMS normalization | ✓ | ✓ | ✓ |
+| `rms_norm` | RMS normalization | ✓ | ✓ | ✓ |
 | `rotary_embedding` | Rotary position embedding | ✓ | ✓ | ✓ |
 | `attention_backend` | Attention backend class path | ✓ | - | ✓ |
 
@@ -380,9 +396,9 @@ Currently supported operators:
 When `VLLM_FL_STRICT=1`, if the primary implementation fails, the system automatically tries other available implementations:
 
 ```
-Op 'rmsnorm' using 'default.flaggems' (kind=flaggems, vendor=None)
-[WARNING] Implementation 'default.flaggems' failed for op 'rmsnorm': ...
-Op 'rmsnorm' fallback to 'reference.torch' (kind=reference, vendor=None)
+Op 'rms_norm' using 'default.flagos' (kind=flagos, vendor=None)
+[WARNING] Implementation 'default.flagos' failed for op 'rms_norm': ...
+Op 'rms_norm' fallback to 'reference.torch' (kind=reference, vendor=None)
 ```
 
 ## Extending the System

@@ -8,12 +8,12 @@ This backend provides operator implementations for NVIDIA CUDA GPUs.
 
 from __future__ import annotations
 
-import os
 from typing import Optional, Union
 
 import torch
 
 from vllm_fl.dispatch.backends.base import Backend
+import vllm_fl.envs as fl_envs
 
 
 class CudaBackend(Backend):
@@ -59,7 +59,7 @@ class CudaBackend(Backend):
 
         return silu_and_mul_cuda(x)
 
-    def rmsnorm(
+    def rms_norm(
         self,
         x: torch.Tensor,
         residual: Optional[torch.Tensor],
@@ -69,9 +69,9 @@ class CudaBackend(Backend):
         """
         RMS normalization using vLLM's CUDA implementation.
         """
-        from .impl.normalization import rmsnorm_cuda
+        from .impl.normalization import rms_norm_cuda
 
-        return rmsnorm_cuda(x, residual, weight, epsilon)
+        return rms_norm_cuda(x, residual, weight, epsilon)
 
     def rotary_embedding(
         self,
@@ -118,7 +118,7 @@ class CudaBackend(Backend):
             return AttentionBackendEnum.MLA.get_path()
 
         # Check for TRITON_ATTN preference via environment variable
-        if os.environ.get("USE_FLAGGEMS", "0") == "1":
+        if fl_envs.USE_FLAGGEMS:
             return AttentionBackendEnum.TRITON_ATTN.get_path()
 
         # Default to FLASH_ATTN

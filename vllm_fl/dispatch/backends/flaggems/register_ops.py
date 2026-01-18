@@ -40,7 +40,7 @@ def register_builtins(registry) -> None:
         # Activation
         OpImpl(
             op_name="silu_and_mul",
-            impl_id="default.flaggems",
+            impl_id="default.flagos",
             kind=BackendImplKind.DEFAULT,
             fn=_bind_is_available(backend.silu_and_mul, is_avail),
             vendor=None,
@@ -48,17 +48,17 @@ def register_builtins(registry) -> None:
         ),
         # Normalization
         OpImpl(
-            op_name="rmsnorm",
-            impl_id="default.flaggems",
+            op_name="rms_norm",
+            impl_id="default.flagos",
             kind=BackendImplKind.DEFAULT,
-            fn=_bind_is_available(backend.rmsnorm, is_avail),
+            fn=_bind_is_available(backend.rms_norm, is_avail),
             vendor=None,
             priority=BackendPriority.DEFAULT,
         ),
         # Rotary Embedding
         OpImpl(
             op_name="rotary_embedding",
-            impl_id="default.flaggems",
+            impl_id="default.flagos",
             kind=BackendImplKind.DEFAULT,
             fn=_bind_is_available(backend.rotary_embedding, is_avail),
             vendor=None,
@@ -67,7 +67,7 @@ def register_builtins(registry) -> None:
         # Attention Backend
         # OpImpl(
         #     op_name="attention_backend",
-        #     impl_id="default.flaggems",
+        #     impl_id="default.flagos",
         #     kind=BackendImplKind.DEFAULT,
         #     fn=_bind_is_available(backend.attention_backend, is_avail),
         #     vendor=None,
