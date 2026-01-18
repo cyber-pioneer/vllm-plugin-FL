@@ -5558,3 +5558,22 @@ class ModelRunnerFL(
         self.transfer_event.record()
         self.transfer_event.synchronize()
         return pinned.tolist()
+
+
+from vllm.model_executor.custom_op import CustomOp
+from .layernorm import *
+from .activation import *
+from .rotary_embedding import *
+from .fused_moe import *
+
+
+def register_oot_ops():
+
+    CustomOp.register_oot(_decorated_op_cls=SiluAndMulFL, name="SiluAndMul")
+    CustomOp.register_oot(_decorated_op_cls=RMSNormFL, name="RMSNorm")
+    CustomOp.register_oot(_decorated_op_cls=RotaryEmbeddingFL, name="RotaryEmbedding")
+    CustomOp.register_oot(_decorated_op_cls=FusedMoEFL, name="FusedMoE")
+    CustomOp.register_oot(_decorated_op_cls=UnquantizedFusedMoEMethodFL, name="UnquantizedFusedMoEMethod")
+
+
+策略b采用以上方式替换，策略c通过全局替换。怎样让策略b对于decode的替换效果与策略c完全一致？
