@@ -215,8 +215,14 @@ class WorkerFL(WorkerBase):
         if fl_envs.USE_FLAGGEMS:
             from vllm_fl.ops.custom_ops import register_oot_ops
             import flag_gems
-            register_oot_ops()
-            flag_gems.enable(record=False) #, unused=["index", "index_put_"])
+
+            # register_oot_ops()
+            logger.info("FlagGems===: only enable fake_op")
+            flag_gems.only_enable(
+                include=["fake_op"],
+                record=False,
+                path="/tmp/gems_enable_oplist.log.txt",
+            )
 
     # def sleep(self, level: int = 1) -> None:
     #     TODO(lms): rewrite CuMemAllocator
