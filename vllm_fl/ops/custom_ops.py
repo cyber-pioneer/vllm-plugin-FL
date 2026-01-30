@@ -47,7 +47,7 @@ def register_oot_ops(whitelist: Optional[List[str]] = None) -> None:
 
     for op_name in ops_to_register:
         if op_name in OOT_OP_CLASSES:
-            logger.info(f"OOT===: Registering op: {op_name}")
+            logger.info(f"Registering oot op: {op_name}")
             CustomOp.register_oot(
                 _decorated_op_cls=OOT_OP_CLASSES[op_name], name=op_name
             )
