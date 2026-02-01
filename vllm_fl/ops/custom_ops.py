@@ -11,13 +11,23 @@ from .fused_moe import *  # noqa F403 F401
 
 logger = logging.getLogger(__name__)
 
-# Mapping from OOT operator name (op_name) to its class
+# Mapping from OOT operator name (op_name, internal/whitelist) to its class
 OOT_OP_CLASSES = {
     "silu_and_mul": SiluAndMulFL,  # noqa F405
     "rms_norm": RMSNormFL,  # noqa F405
     "rotary_embedding": RotaryEmbeddingFL,  # noqa F405
     "fused_moe": FusedMoEFL,  # noqa F405
     "unquantized_fused_moe_method": UnquantizedFusedMoEMethodFL,  # noqa F405
+}
+
+# Name passed to CustomOp.register_oot must match what vLLM uses when looking up
+# the OOT op (typically the base class name). Internal op_name stays snake_case.
+OOT_REGISTRATION_NAMES = {
+    "silu_and_mul": "SiluAndMul",
+    "rms_norm": "RMSNorm",
+    "rotary_embedding": "RotaryEmbedding",
+    "fused_moe": "FusedMoE",
+    "unquantized_fused_moe_method": "UnquantizedFusedMoEMethod",
 }
 
 
@@ -47,9 +57,10 @@ def register_oot_ops(whitelist: Optional[List[str]] = None) -> None:
 
     for op_name in ops_to_register:
         if op_name in OOT_OP_CLASSES:
-            logger.info(f"Registering oot op: {op_name}")
+            registration_name = OOT_REGISTRATION_NAMES.get(op_name, op_name)
+            logger.info(f"Registering oot op: {op_name} as '{registration_name}'")
             CustomOp.register_oot(
-                _decorated_op_cls=OOT_OP_CLASSES[op_name], name=op_name
+                _decorated_op_cls=OOT_OP_CLASSES[op_name], name=registration_name
             )
         else:
             logger.warning(f"OOT op '{op_name}' not found in OOT_OP_CLASSES, skipping.")
