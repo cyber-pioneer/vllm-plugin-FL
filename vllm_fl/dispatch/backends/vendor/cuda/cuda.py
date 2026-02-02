@@ -8,7 +8,6 @@ This backend provides operator implementations for NVIDIA CUDA GPUs.
 
 from __future__ import annotations
 
-import os
 from typing import Optional, Union
 
 import torch
@@ -118,8 +117,8 @@ class CudaBackend(Backend):
             return AttentionBackendEnum.MLA.get_path()
 
         # Check for TRITON_ATTN preference via environment variable
-        if os.environ.get("USE_FLAGGEMS", "0") == "1":
-            return AttentionBackendEnum.TRITON_ATTN.get_path()
+        # if os.environ.get("USE_FLAGGEMS", "0") == "1":
+        #     return AttentionBackendEnum.TRITON_ATTN.get_path()
 
         # Default to FLASH_ATTN
         return AttentionBackendEnum.FLASH_ATTN.get_path()
