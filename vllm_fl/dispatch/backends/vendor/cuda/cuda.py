@@ -13,7 +13,6 @@ from typing import Optional, Union
 import torch
 
 from vllm_fl.dispatch.backends.base import Backend
-import vllm_fl.envs as fl_envs
 
 
 class CudaBackend(Backend):
@@ -116,10 +115,6 @@ class CudaBackend(Backend):
 
         if use_mla:
             return AttentionBackendEnum.MLA.get_path()
-
-        # Check for TRITON_ATTN preference via environment variable
-        if fl_envs.USE_FLAGGEMS:
-            return AttentionBackendEnum.TRITON_ATTN.get_path()
 
         # Default to FLASH_ATTN
         return AttentionBackendEnum.FLASH_ATTN.get_path()
