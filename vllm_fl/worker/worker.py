@@ -237,6 +237,7 @@ class WorkerFL(WorkerBase):
                 flag_gems.only_enable(
                     include=whitelist,
                     record=True,
+                    once=True,
                     path=fl_envs.FLAGGEMS_ENABLE_OPLIST_PATH,
                 )
             elif blacklist:
@@ -244,11 +245,14 @@ class WorkerFL(WorkerBase):
                 flag_gems.enable(
                     unused=blacklist,
                     record=True,
+                    once=True,
                     path=fl_envs.FLAGGEMS_ENABLE_OPLIST_PATH,
                 )
             else:
                 logger.info("[FlagGems] Enable all ops")
-                flag_gems.enable(record=True, path=fl_envs.FLAGGEMS_ENABLE_OPLIST_PATH)
+                flag_gems.enable(
+                    record=True, once=True, path=fl_envs.FLAGGEMS_ENABLE_OPLIST_PATH
+                )
 
     # def sleep(self, level: int = 1) -> None:
     #     TODO(lms): rewrite CuMemAllocator
