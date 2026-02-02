@@ -11,23 +11,21 @@ from .fused_moe import *  # noqa F403 F401
 
 logger = logging.getLogger(__name__)
 
-# Mapping from OOT operator name (op_name, internal/whitelist) to its class
-OOT_OP_CLASSES = {
-    "silu_and_mul": SiluAndMulFL,  # noqa F405
-    "rms_norm": RMSNormFL,  # noqa F405
-    "rotary_embedding": RotaryEmbeddingFL,  # noqa F405
-    "fused_moe": FusedMoEFL,  # noqa F405
-    "unquantized_fused_moe_method": UnquantizedFusedMoEMethodFL,  # noqa F405
-}
-
-# Name passed to CustomOp.register_oot must match what vLLM uses when looking up
-# the OOT op (typically the base class name). Internal op_name stays snake_case.
-OOT_REGISTRATION_NAMES = {
-    "silu_and_mul": "SiluAndMul",
-    "rms_norm": "RMSNorm",
-    "rotary_embedding": "RotaryEmbedding",
-    "fused_moe": "FusedMoE",
-    "unquantized_fused_moe_method": "UnquantizedFusedMoEMethod",
+# Mapping from OOT operator name (op_name, internal/whitelist) to (class, registration_name).
+# registration_name is passed to CustomOp.register_oot and must match what vLLM uses
+# when looking up the OOT op (typically the base class name).
+# item example as follows:
+# op_name: (class, registration_name of vllm's CustomOp.register_oot)
+# note: cannot control inner gems op of UnquantizedFusedMoEMethodFL via env variable.
+OOT_OPS = {
+    "silu_and_mul": (SiluAndMulFL, "SiluAndMul"),  # noqa F405
+    "rms_norm": (RMSNormFL, "RMSNorm"),  # noqa F405
+    "rotary_embedding": (RotaryEmbeddingFL, "RotaryEmbedding"),  # noqa F405
+    "fused_moe": (FusedMoEFL, "FusedMoE"),  # noqa F405
+    "unquantized_fused_moe_method": (
+        UnquantizedFusedMoEMethodFL,  # noqa F405
+        "UnquantizedFusedMoEMethod",
+    ),
 }
 
 
@@ -40,7 +38,7 @@ def register_oot_ops(whitelist: Optional[List[str]] = None) -> None:
                    If None, check VLLM_FL_OOT_WHITELIST env var.
                    If neither is set, register all operators.
     """
-    from vllm_fl.utils import get_oot_whitelist, is_oot_enabled
+    from vllm_fl.utils import get_oot_whitelist, is_oot_enabled, use_flaggems_op
 
     # Check if OOT registration is enabled
     if not is_oot_enabled():
@@ -53,14 +51,18 @@ def register_oot_ops(whitelist: Optional[List[str]] = None) -> None:
     elif whitelist is not None:
         ops_to_register = whitelist
     else:
-        ops_to_register = list(OOT_OP_CLASSES.keys())
+        ops_to_register = list(OOT_OPS.keys())
 
     for op_name in ops_to_register:
-        if op_name in OOT_OP_CLASSES:
-            registration_name = OOT_REGISTRATION_NAMES.get(op_name, op_name)
-            logger.info(f"Registering oot op: {op_name} as '{registration_name}'")
-            CustomOp.register_oot(
-                _decorated_op_cls=OOT_OP_CLASSES[op_name], name=registration_name
-            )
-        else:
-            logger.warning(f"OOT op '{op_name}' not found in OOT_OP_CLASSES, skipping.")
+        if op_name not in OOT_OPS:
+            logger.warning(f"OOT op '{op_name}' not found in OOT_OPS, skipping.")
+            continue
+
+        # unquantized_fused_moe_method only registers when use_flaggems_op is True
+        if op_name == "unquantized_fused_moe_method" and not use_flaggems_op(op_name):
+            logger.debug(f"Skipping '{op_name}': use_flaggems_op returned False")
+            continue
+
+        op_cls, registration_name = OOT_OPS[op_name]
+        logger.info(f"Registering oot op: {op_name} as '{registration_name}'")
+        CustomOp.register_oot(_decorated_op_cls=op_cls, name=registration_name)
