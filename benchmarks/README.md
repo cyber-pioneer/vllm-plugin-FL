@@ -12,8 +12,6 @@ This directory provides two workflows:
 - Start an OpenAI-compatible inference service with `--served-model-name Qwen3-Next`.
   If you use a different name, update the string in `benchmark_throughput_flagos.py`.
 - Run the benchmark on the same host as the service.
-- Ensure network bandwidth is stable (>= 10 Mbps; 100 Mbps recommended).
-- Validated with vLLM 0.11.0 and 0.12.0; other versions or frameworks may differ.
 
 ### Run
 ```bash

@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+# Copyright (c) 2026 BAAI. All rights reserved.
+
 """
 Auto-tune FlagGems operators based on throughput.
 
