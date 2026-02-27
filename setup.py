@@ -2,7 +2,6 @@ import os
 from typing import List
 
 from setuptools import find_packages, setup
-from setuptools_scm import get_version
 
 ROOT_DIR = os.path.dirname(__file__)
 VERSION = "0.0.0"
@@ -46,7 +45,7 @@ def get_requirements() -> List[str]:
 
 
 setup(
-    name='vllm_fl',
+    name="vllm_fl",
     # Follow:
     # https://packaging.python.org/en/latest/specifications/version-specifiers
     version=VERSION,
@@ -72,10 +71,14 @@ setup(
         "Topic :: Scientific/Engineering :: Information Analysis",
     ],
     packages=find_packages(exclude=("docs", "examples", "tests*")),
+    package_data={
+        "vllm_fl.dispatch.config": ["*.yaml"],
+    },
     python_requires=">=3.9",
     install_requires=get_requirements(),
     extras_require={},
-    entry_points={'vllm.platform_plugins': ["fl = vllm_fl:register"],
-                  'vllm.general_plugins': ["fl = vllm_fl:register_model"]}
+    entry_points={
+        "vllm.platform_plugins": ["fl = vllm_fl:register"],
+        "vllm.general_plugins": ["fl = vllm_fl:register_model"],
+    },
 )
-
