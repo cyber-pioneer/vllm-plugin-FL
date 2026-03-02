@@ -127,10 +127,10 @@ def fused_recurrent_gated_delta_rule_fwd_kernel(
         if IS_BETA_HEADWISE:
             p_beta = beta + (bos * HV + i_hv) * V + o_v + HV * V * i_t
         else:
-            p_beta = beta + bos * HV + i_hv + HV * i_t
+            p_beta = beta + bos * H + i_h + H * i_t
 
         if not IS_KDA:
-            p_g = g + bos * HV + i_hv + HV * i_t
+            p_g = g + bos * H + i_h + H * i_t
         else:
             p_gk = g + (bos * HV + i_hv + HV * i_t) * K + o_k
 
@@ -198,7 +198,7 @@ def fused_recurrent_gated_delta_rule_fwd(
     B, T, H, K, V = *k.shape, v.shape[-1]
     HV = v.shape[2]
     N = B if cu_seqlens is None else len(cu_seqlens) - 1
-    BK, BV = triton.next_power_of_2(K), min(triton.next_power_of_2(V), 8)
+    BK, BV = triton.next_power_of_2(K), min(triton.next_power_of_2(V), 64)
     NK, NV = triton.cdiv(K, BK), triton.cdiv(V, BV)
     assert NK == 1, "NK > 1 is not supported yet"
     num_stages = 3

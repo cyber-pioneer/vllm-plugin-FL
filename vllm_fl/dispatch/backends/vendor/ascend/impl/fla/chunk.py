@@ -36,12 +36,26 @@ def chunk_gated_delta_rule_fwd(
     output_final_state: bool,
     cu_seqlens: Optional[torch.LongTensor] = None,
 ):
+    import os
+    _debug_sync = os.environ.get("FLA_DEBUG_SYNC", "0") == "1"
+    if _debug_sync:
+        import logging
+        _log = logging.getLogger("fla.chunk.debug")
     g = chunk_local_cumsum(g, chunk_size=64, cu_seqlens=cu_seqlens)
+    if _debug_sync:
+        torch.npu.synchronize()
+        _log.info("PASS: chunk_local_cumsum")
     # obtain WY representation. u is actually the new v.
     A = chunk_scaled_dot_kkt_fwd(
         k=k, beta=beta, g_cumsum=g, cu_seqlens=cu_seqlens, output_dtype=torch.float32
     )
+    if _debug_sync:
+        torch.npu.synchronize()
+        _log.info("PASS: chunk_scaled_dot_kkt_fwd")
     A = solve_tril(A=A, cu_seqlens=cu_seqlens, output_dtype=k.dtype)
+    if _debug_sync:
+        torch.npu.synchronize()
+        _log.info("PASS: solve_tril")
     w, u = recompute_w_u_fwd(
         k=k,
         v=v,
@@ -50,6 +64,9 @@ def chunk_gated_delta_rule_fwd(
         g_cumsum=g,
         cu_seqlens=cu_seqlens,
     )
+    if _debug_sync:
+        torch.npu.synchronize()
+        _log.info("PASS: recompute_w_u_fwd")
     h, v_new, final_state = chunk_gated_delta_rule_fwd_h(
         k=k,
         w=w,
@@ -59,6 +76,9 @@ def chunk_gated_delta_rule_fwd(
         output_final_state=output_final_state,
         cu_seqlens=cu_seqlens,
     )
+    if _debug_sync:
+        torch.npu.synchronize()
+        _log.info("PASS: chunk_gated_delta_rule_fwd_h")
     o = chunk_fwd_o(
         q=q,
         k=k,
@@ -68,6 +88,9 @@ def chunk_gated_delta_rule_fwd(
         scale=scale,
         cu_seqlens=cu_seqlens,
     )
+    if _debug_sync:
+        torch.npu.synchronize()
+        _log.info("PASS: chunk_fwd_o")
     if SUPPRESS_LEVEL < 3:
         return g, o, A, final_state, None, None, None
     elif SUPPRESS_LEVEL >= 3:

@@ -99,7 +99,7 @@ def chunk_fwd_kernel_o(
         if USE_G:
             offs_t = i_t * BT + tl.arange(0, BT)
             mask_t = offs_t < T
-            g_ptr = g + bos + i_h * T_max
+            g_ptr = g + bos + (i_h // (H // Hg)) * T_max
             b_g = tl.load(g_ptr + offs_t, mask=mask_t, other=0.0)
 
             b_o = b_o * tl.exp(b_g)[:, None]

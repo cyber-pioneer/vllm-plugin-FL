@@ -242,6 +242,623 @@ class WorkerFL(WorkerBase):
 
         register_oot_ops()
 
+        # Monkey-patch causal_conv1d ops to use Ascend dispatch versions
+        # The Triton-Ascend backend cannot compile the upstream Triton
+        # causal_conv1d kernels, so redirect to the Ascend vendor impl.
+        try:
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.causal_conv1d import (
+                causal_conv1d_fn as ascend_causal_conv1d_fn,
+                causal_conv1d_update_npu as ascend_causal_conv1d_update,
+            )
+            import vllm.model_executor.layers.mamba.ops.causal_conv1d as _conv1d_mod
+            _conv1d_mod.causal_conv1d_fn = ascend_causal_conv1d_fn
+            _conv1d_mod.causal_conv1d_update = ascend_causal_conv1d_update
+            # Also patch qwen3_next which has its own cached import
+            import vllm.model_executor.models.qwen3_next as _qwen3_next_mod
+            _qwen3_next_mod.causal_conv1d_fn = ascend_causal_conv1d_fn
+            _qwen3_next_mod.causal_conv1d_update = ascend_causal_conv1d_update
+            logger.info("Patched causal_conv1d ops to use Ascend vendor implementation")
+        except Exception as e:
+            logger.warning(f"Failed to patch causal_conv1d ops: {e}")
+
+        # Patch torch.cuda.device to redirect to torch.npu.device on NPU.
+        # The FLA chunk_gated_delta_rule uses torch.cuda.device() which
+        # fails on NPU since there's no CUDA.
+        try:
+            _orig_cuda_device = torch.cuda.device
+            class _NPUDeviceContext:
+                """Redirect torch.cuda.device to torch.npu.device on NPU."""
+                def __init__(self, device_index):
+                    self._ctx = torch.npu.device(device_index)
+                def __enter__(self):
+                    return self._ctx.__enter__()
+                def __exit__(self, *args):
+                    return self._ctx.__exit__(*args)
+            torch.cuda.device = _NPUDeviceContext
+            logger.info("Patched torch.cuda.device to use NPU device context")
+        except Exception as e:
+            logger.warning(f"Failed to patch torch.cuda.device for NPU: {e}")
+
+        # Monkey-patch FLA ops (chunk_gated_delta_rule and
+        # fused_recurrent_gated_delta_rule) to use Ascend vendor
+        # implementations.  The upstream vLLM Triton kernels for these ops
+        # fail to compile on the Triton-Ascend MLIR backend.
+        try:
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.fla.chunk import (
+                chunk_gated_delta_rule as ascend_chunk_gated_delta_rule,
+            )
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.fla.fused_recurrent import (
+                fused_recurrent_gated_delta_rule as ascend_fused_recurrent_gated_delta_rule,
+            )
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.fla.fused_recurrent import (
+                fused_recurrent_gated_delta_rule_fwd_kernel as ascend_fused_recurrent_kernel,
+            )
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.fla.layernorm_guard import (
+                LayerNormFn as ascend_LayerNormFn,
+            )
+            # Patch the source modules (following reference vllm-ascend approach)
+            import vllm.model_executor.layers.fla.ops as _fla_ops_mod
+            import vllm.model_executor.layers.fla.ops.chunk as _fla_chunk_mod
+            import vllm.model_executor.layers.fla.ops.fused_recurrent as _fla_recurrent_mod
+            import vllm.model_executor.layers.fla.ops.layernorm_guard as _fla_layernorm_mod
+            # Patch chunk_gated_delta_rule (prefill path)
+            _fla_ops_mod.chunk_gated_delta_rule = ascend_chunk_gated_delta_rule
+            _fla_chunk_mod.chunk_gated_delta_rule = ascend_chunk_gated_delta_rule
+            # Patch fused_recurrent wrapper + inner kernel (decode path)
+            _fla_ops_mod.fused_recurrent_gated_delta_rule = ascend_fused_recurrent_gated_delta_rule
+            _fla_recurrent_mod.fused_recurrent_gated_delta_rule = ascend_fused_recurrent_gated_delta_rule
+            _fla_recurrent_mod.fused_recurrent_gated_delta_rule_fwd_kernel = ascend_fused_recurrent_kernel
+            # Patch LayerNormFn
+            _fla_layernorm_mod.LayerNormFn = ascend_LayerNormFn
+            # Patch qwen3_next which has its own cached imports
+            import vllm.model_executor.models.qwen3_next as _qwen3_next_mod
+            _qwen3_next_mod.chunk_gated_delta_rule = ascend_chunk_gated_delta_rule
+            _qwen3_next_mod.fused_recurrent_gated_delta_rule = ascend_fused_recurrent_gated_delta_rule
+            logger.info("Patched FLA ops (chunk_gated_delta_rule, fused_recurrent, LayerNormFn) to use Ascend vendor implementations")
+        except Exception as e:
+            logger.warning(f"Failed to patch FLA ops for NPU: {e}")
+
+        # Patch torch.argsort for the GDN attention backend.
+        # NPU's argsort doesn't support bool tensors and without stable=True
+        # produces incorrect indices, causing DDR out-of-range errors.
+        try:
+            import vllm.v1.attention.backends.gdn_attn as gdn_attn
+
+            _orig_argsort = torch.argsort
+
+            def _npu_argsort(tensor, *args, **kwargs):
+                if tensor.dtype == torch.bool:
+                    kwargs["stable"] = True
+                    return _orig_argsort(tensor.to(torch.int32), *args, **kwargs)
+                return _orig_argsort(tensor, *args, **kwargs)
+
+            class _TorchWrapper:
+                def __init__(self):
+                    self._raw_torch = torch
+                def __getattr__(self, name):
+                    if name == "argsort":
+                        return _npu_argsort
+                    return getattr(self._raw_torch, name)
+
+            gdn_attn.torch = _TorchWrapper()
+            logger.info("Patched torch.argsort for GDN attention (NPU bool support)")
+        except Exception as e:
+            logger.warning(f"Failed to patch torch.argsort for GDN attention: {e}")
+
+        # Monkey-patch GroupCoordinator to use HCCL PG options and NPU
+        # communicator.  Without this, process groups are created without
+        # HCCL-specific options (buffer sizes, etc.) and the default
+        # all_to_all / all_reduce paths can trigger async DDR errors on
+        # Ascend NPU during prefill of longer sequences.
+        # Ported from reference vllm-ascend patch_distributed.py.
+        try:
+            import torch.distributed as dist
+            from torch.distributed import Backend
+            import torch_npu
+            from vllm.distributed.parallel_state import (
+                GroupCoordinator,
+                _get_unique_name,
+                _register_group,
+            )
+            from vllm.distributed.device_communicators.base_device_communicator import (
+                DeviceCommunicatorBase,
+            )
+            import vllm.distributed.parallel_state as _ps_mod
+
+            _DEFAULT_HCCL_BUFFER_SIZE = 200
+
+            def _create_hccl_pg_options(group_name: str):
+                """Create HCCL process group options with buffer config."""
+                options = (
+                    torch_npu._C._distributed_c10d
+                    .ProcessGroupHCCL.Options()
+                )
+                if group_name and "mc2" in group_name:
+                    return options
+                options.hccl_config = {
+                    "hccl_buffer_size": _DEFAULT_HCCL_BUFFER_SIZE
+                }
+                return options
+
+            class _NPUCommunicator(DeviceCommunicatorBase):
+                """Minimal NPU communicator with all_to_all support."""
+
+                def __init__(self, cpu_group, device=None,
+                             device_group=None, unique_name=""):
+                    super().__init__(
+                        cpu_group, device, device_group, unique_name
+                    )
+                    self.device = torch.npu.current_device()
+
+                def all_to_all(
+                    self,
+                    input_: torch.Tensor,
+                    scatter_dim: int = 0,
+                    gather_dim: int = -1,
+                    scatter_sizes: list[int] | None = None,
+                    gather_sizes: list[int] | None = None,
+                ) -> torch.Tensor:
+                    if scatter_dim < 0:
+                        scatter_dim += input_.dim()
+                    if gather_dim < 0:
+                        gather_dim += input_.dim()
+
+                    if (scatter_sizes is not None
+                            and gather_sizes is not None):
+                        input_list = [
+                            t.contiguous()
+                            for t in torch.split(
+                                input_, scatter_sizes, scatter_dim
+                            )
+                        ]
+                        output_list = []
+                        base_shape = input_list[self.rank].size()
+                        for i in range(self.world_size):
+                            shape = list(base_shape)
+                            shape[gather_dim] = gather_sizes[i]
+                            output_list.append(torch.empty(
+                                shape,
+                                dtype=input_.dtype,
+                                device=input_.device,
+                            ))
+                    else:
+                        input_list = [
+                            t.contiguous()
+                            for t in torch.tensor_split(
+                                input_, self.world_size, scatter_dim
+                            )
+                        ]
+                        output_list = [
+                            torch.empty_like(input_list[i])
+                            for i in range(self.world_size)
+                        ]
+
+                    dist.all_to_all(
+                        output_list, input_list,
+                        group=self.device_group,
+                    )
+                    return torch.cat(
+                        output_list, dim=gather_dim
+                    ).contiguous()
+
+            class _GroupCoordinatorPatch(GroupCoordinator):
+                def __init__(
+                    self,
+                    group_ranks: list[list[int]],
+                    local_rank: int,
+                    torch_distributed_backend: str | Backend,
+                    use_device_communicator: bool,
+                    use_message_queue_broadcaster: bool = False,
+                    group_name: str | None = None,
+                ):
+                    group_name = group_name or "anonymous"
+                    self.unique_name = _get_unique_name(group_name)
+                    _register_group(self)
+
+                    self.rank = torch.distributed.get_rank()
+                    self.local_rank = local_rank
+
+                    self_device_group = None
+                    self_cpu_group = None
+                    hccl_pg_options = _create_hccl_pg_options(group_name)
+
+                    for ranks in group_ranks:
+                        device_group = torch.distributed.new_group(
+                            ranks,
+                            backend=torch_distributed_backend,
+                            pg_options=hccl_pg_options,
+                        )
+                        cpu_group = torch.distributed.new_group(
+                            ranks, backend="gloo"
+                        )
+                        if self.rank in ranks:
+                            self.ranks = ranks
+                            self.world_size = len(ranks)
+                            self.rank_in_group = ranks.index(self.rank)
+                            self_device_group = device_group
+                            self_cpu_group = cpu_group
+
+                    assert self_cpu_group is not None
+                    assert self_device_group is not None
+
+                    self.cpu_group = self_cpu_group
+                    self.device_group = self_device_group
+                    self.device = torch.npu.current_device()
+
+                    self.use_device_communicator = use_device_communicator
+                    self.device_communicator = None
+                    if use_device_communicator and self.world_size > 1:
+                        self.device_communicator = _NPUCommunicator(
+                            cpu_group=self.cpu_group,
+                            device=self.device,
+                            device_group=self.device_group,
+                            unique_name=self.unique_name,
+                        )
+
+                    from vllm.distributed.device_communicators.shm_broadcast import (
+                        MessageQueue,
+                    )
+
+                    self.mq_broadcaster: MessageQueue | None = None
+                    if use_message_queue_broadcaster and self.world_size > 1:
+                        self.mq_broadcaster = (
+                            MessageQueue.create_from_process_group(
+                                self.cpu_group, 1 << 22, 6
+                            )
+                        )
+
+                    self.use_custom_op_call = False
+                    self.use_cpu_custom_send_recv = False
+
+                def all_to_all(
+                    self,
+                    input_: torch.Tensor,
+                    scatter_dim: int = 0,
+                    gather_dim: int = -1,
+                    scatter_sizes: list[int] | None = None,
+                    gather_sizes: list[int] | None = None,
+                ) -> torch.Tensor:
+                    if self.world_size == 1:
+                        return input_
+                    assert -input_.dim() <= scatter_dim < input_.dim()
+                    assert -input_.dim() <= gather_dim < input_.dim()
+                    assert self.device_communicator is not None
+                    return self.device_communicator.all_to_all(
+                        input_, scatter_dim, gather_dim,
+                        scatter_sizes, gather_sizes,
+                    )
+
+                def all_reduce(self, input_):
+                    if self.world_size == 1:
+                        return input_
+                    return torch.ops.vllm.all_reduce(
+                        input_, group_name=self.unique_name
+                    )
+
+            _ps_mod.GroupCoordinator = _GroupCoordinatorPatch
+            logger.info(
+                "Patched GroupCoordinator with HCCL PG options "
+                "and NPU communicator"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to patch GroupCoordinator for NPU: {e}"
+            )
+
+        # Register unquantized_gemm as a custom op so that the graph
+        # compiler can fuse MatmulAllReduceAddRMSNorm.  Without this, the
+        # gemm and all_reduce stay as separate async ops which can cause
+        # DDR errors on Ascend NPU.
+        # Ported from reference vllm-ascend patch_unquantized_gemm.py.
+        try:
+            import vllm.model_executor.layers.utils as _layer_utils_mod
+            from vllm.utils.torch_utils import direct_register_custom_op
+
+            def _unquantized_gemm_npu(
+                x: torch.Tensor,
+                weight: torch.Tensor,
+                bias: torch.Tensor | None = None,
+            ) -> torch.Tensor:
+                return torch.nn.functional.linear(x, weight, bias)
+
+            def _unquantized_gemm_fake(
+                x: torch.Tensor,
+                weight: torch.Tensor,
+                bias: torch.Tensor | None = None,
+            ) -> torch.Tensor:
+                output_shape = (x.shape[0], weight.shape[0])
+                return torch.empty(
+                    output_shape, dtype=x.dtype, device=x.device
+                )
+
+            direct_register_custom_op(
+                op_name="unquantized_gemm",
+                op_func=_unquantized_gemm_npu,
+                fake_impl=_unquantized_gemm_fake,
+                mutates_args=[],
+                dispatch_key="PrivateUse1",
+            )
+
+            def _default_unquantized_gemm_patched(
+                layer: torch.nn.Module,
+                x: torch.Tensor,
+                weight: torch.Tensor,
+                bias: torch.Tensor | None = None,
+            ) -> torch.Tensor:
+                if x.device.type == "npu":
+                    return torch.ops.vllm.unquantized_gemm(x, weight, bias)
+                else:
+                    return torch.nn.functional.linear(x, weight, bias)
+
+            _layer_utils_mod.default_unquantized_gemm = (
+                _default_unquantized_gemm_patched
+            )
+            logger.info(
+                "Registered unquantized_gemm as custom op and "
+                "patched default_unquantized_gemm for NPU"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to register unquantized_gemm custom op: {e}"
+            )
+
+        # Monkey-patch Qwen3NextGatedDeltaNet._forward_core to use the
+        # fused sigmoid gating delta rule update kernel for the decode-only
+        # path.  The upstream code calls fused_gdn_gating + fused_recurrent
+        # as two separate Triton kernels which cause DDR errors on Ascend.
+        # The fused kernel combines gating + recurrent into a single launch.
+        try:
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.fla.sigmoid_gating import (
+                fused_sigmoid_gating_delta_rule_update,
+            )
+            from vllm_fl.dispatch.backends.vendor.ascend.impl.fused_gdn_gating import (
+                fused_gdn_gating_patch,
+            )
+            from vllm.forward_context import get_forward_context
+            from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
+            from vllm.model_executor.layers.fla.ops import (
+                chunk_gated_delta_rule as _chunk_gated_delta_rule,
+                fused_recurrent_gated_delta_rule as _fused_recurrent_gated_delta_rule,
+            )
+            from vllm.model_executor.layers.mamba.ops.causal_conv1d import (
+                causal_conv1d_fn as _causal_conv1d_fn,
+                causal_conv1d_update as _causal_conv1d_update,
+            )
+            from vllm.model_executor.models.qwen3_next import Qwen3NextGatedDeltaNet
+
+            def _forward_core_patched(
+                self,
+                mixed_qkv: torch.Tensor,
+                b: torch.Tensor,
+                a: torch.Tensor,
+                core_attn_out: torch.Tensor,
+            ):
+                forward_context = get_forward_context()
+                attn_metadata = forward_context.attn_metadata
+
+                if attn_metadata is None:
+                    return
+
+                assert isinstance(attn_metadata, dict)
+                attn_metadata = attn_metadata[self.prefix]
+                assert isinstance(attn_metadata, GDNAttentionMetadata)
+                has_initial_state = attn_metadata.has_initial_state
+                spec_query_start_loc = attn_metadata.spec_query_start_loc
+                non_spec_query_start_loc = attn_metadata.non_spec_query_start_loc
+                spec_sequence_masks = attn_metadata.spec_sequence_masks
+                spec_token_indx = attn_metadata.spec_token_indx
+                non_spec_token_indx = attn_metadata.non_spec_token_indx
+                spec_state_indices_tensor = attn_metadata.spec_state_indices_tensor
+                non_spec_state_indices_tensor = attn_metadata.non_spec_state_indices_tensor
+                self_kv_cache = self.kv_cache[forward_context.virtual_engine]
+                conv_state = self_kv_cache[0].transpose(-1, -2)
+                ssm_state = self_kv_cache[1]
+                num_actual_tokens = attn_metadata.num_actual_tokens
+                num_accepted_tokens = attn_metadata.num_accepted_tokens
+
+                mixed_qkv = mixed_qkv[:num_actual_tokens]
+                b = b[:num_actual_tokens]
+                a = a[:num_actual_tokens]
+
+                # 1. Convolution sequence transformation
+                conv_weights = self.conv1d.weight.view(
+                    self.conv1d.weight.size(0), self.conv1d.weight.size(2)
+                )
+                if spec_sequence_masks is not None:
+                    if attn_metadata.num_prefills == 0 and attn_metadata.num_decodes == 0:
+                        mixed_qkv_spec = mixed_qkv
+                        mixed_qkv_non_spec = None
+                    else:
+                        mixed_qkv_spec = mixed_qkv.index_select(0, spec_token_indx)
+                        mixed_qkv_non_spec = mixed_qkv.index_select(0, non_spec_token_indx)
+                else:
+                    mixed_qkv_spec = None
+                    mixed_qkv_non_spec = mixed_qkv
+
+                # 1.1: Process the multi-query part
+                if spec_sequence_masks is not None:
+                    mixed_qkv_spec = _causal_conv1d_update(
+                        mixed_qkv_spec,
+                        conv_state,
+                        conv_weights,
+                        self.conv1d.bias,
+                        self.activation,
+                        conv_state_indices=spec_state_indices_tensor[:, 0][: attn_metadata.num_spec_decodes],
+                        num_accepted_tokens=num_accepted_tokens,
+                        query_start_loc=spec_query_start_loc,
+                        max_query_len=spec_state_indices_tensor.size(-1),
+                        validate_data=False,
+                    )
+
+                # 1.2: Process the remaining part
+                if attn_metadata.num_prefills > 0:
+                    if mixed_qkv_non_spec is not None:
+                        mixed_qkv_non_spec_T = mixed_qkv_non_spec.transpose(0, 1)
+                        mixed_qkv_non_spec = _causal_conv1d_fn(
+                            mixed_qkv_non_spec_T,
+                            conv_weights,
+                            self.conv1d.bias,
+                            activation=self.activation,
+                            conv_states=conv_state,
+                            has_initial_state=has_initial_state,
+                            cache_indices=non_spec_state_indices_tensor,
+                            query_start_loc=non_spec_query_start_loc,
+                            metadata=attn_metadata,
+                        ).transpose(0, 1)
+                elif attn_metadata.num_decodes > 0:
+                    mixed_qkv_non_spec = _causal_conv1d_update(
+                        mixed_qkv_non_spec,
+                        conv_state,
+                        conv_weights,
+                        self.conv1d.bias,
+                        self.activation,
+                        conv_state_indices=non_spec_state_indices_tensor[: attn_metadata.num_actual_tokens],
+                        validate_data=True,
+                    )
+                else:
+                    mixed_qkv_non_spec = None
+
+                query_spec, key_spec, value_spec = self.rearrange_mixed_qkv(mixed_qkv_spec)
+                query_non_spec, key_non_spec, value_non_spec = self.rearrange_mixed_qkv(mixed_qkv_non_spec)
+
+                if attn_metadata.num_prefills > 0 or spec_sequence_masks is not None:
+                    # Prefill or spec decoding path: use gating + separate kernels
+                    g, beta = fused_gdn_gating_patch(self.A_log, a, b, self.dt_bias)
+                    if spec_sequence_masks is not None:
+                        if attn_metadata.num_prefills == 0 and attn_metadata.num_decodes == 0:
+                            g_spec = g
+                            beta_spec = beta
+                            g_non_spec = None
+                            beta_non_spec = None
+                        else:
+                            g_spec = g.index_select(1, spec_token_indx)
+                            beta_spec = beta.index_select(1, spec_token_indx)
+                            g_non_spec = g.index_select(1, non_spec_token_indx)
+                            beta_non_spec = beta.index_select(1, non_spec_token_indx)
+                    else:
+                        g_spec = None
+                        beta_spec = None
+                        g_non_spec = g
+                        beta_non_spec = beta
+
+                    # 2.1: Process the multi-query part
+                    if spec_sequence_masks is not None:
+                        core_attn_out_spec, last_recurrent_state = _fused_recurrent_gated_delta_rule(
+                            q=query_spec,
+                            k=key_spec,
+                            v=value_spec,
+                            g=g_spec,
+                            beta=beta_spec,
+                            initial_state=ssm_state,
+                            inplace_final_state=True,
+                            cu_seqlens=spec_query_start_loc[: attn_metadata.num_spec_decodes + 1],
+                            ssm_state_indices=spec_state_indices_tensor,
+                            num_accepted_tokens=num_accepted_tokens,
+                            use_qk_l2norm_in_kernel=True,
+                        )
+                    else:
+                        core_attn_out_spec, last_recurrent_state = None, None
+
+                    # 2.2: Process the remaining part
+                    if attn_metadata.num_prefills > 0:
+                        initial_state = ssm_state[non_spec_state_indices_tensor].contiguous()
+                        initial_state[~has_initial_state, ...] = 0
+                        (
+                            core_attn_out_non_spec,
+                            last_recurrent_state,
+                        ) = _chunk_gated_delta_rule(
+                            q=query_non_spec,
+                            k=key_non_spec,
+                            v=value_non_spec,
+                            g=g_non_spec,
+                            beta=beta_non_spec,
+                            initial_state=initial_state,
+                            output_final_state=True,
+                            cu_seqlens=non_spec_query_start_loc,
+                            head_first=False,
+                            use_qk_l2norm_in_kernel=True,
+                        )
+                        ssm_state[non_spec_state_indices_tensor] = last_recurrent_state.to(ssm_state.dtype)
+                    elif attn_metadata.num_decodes > 0:
+                        core_attn_out_non_spec, last_recurrent_state = _fused_recurrent_gated_delta_rule(
+                            q=query_non_spec,
+                            k=key_non_spec,
+                            v=value_non_spec,
+                            g=g_non_spec,
+                            beta=beta_non_spec,
+                            initial_state=ssm_state,
+                            inplace_final_state=True,
+                            cu_seqlens=non_spec_query_start_loc[: attn_metadata.num_decodes + 1],
+                            ssm_state_indices=non_spec_state_indices_tensor,
+                            use_qk_l2norm_in_kernel=True,
+                        )
+                    else:
+                        core_attn_out_non_spec, last_recurrent_state = None, None
+
+                elif attn_metadata.num_decodes > 0:
+                    # Decode-only path: use fused sigmoid gating + delta rule
+                    # update kernel (single kernel launch, avoids DDR errors)
+                    core_attn_out_non_spec = fused_sigmoid_gating_delta_rule_update(
+                        A_log=self.A_log.contiguous(),
+                        dt_bias=self.dt_bias.contiguous(),
+                        q=query_non_spec.contiguous(),
+                        k=key_non_spec.contiguous(),
+                        v=value_non_spec.contiguous(),
+                        a=a.contiguous(),
+                        b=b.contiguous(),
+                        initial_state_source=ssm_state,
+                        initial_state_indices=non_spec_state_indices_tensor,
+                        cu_seqlens=non_spec_query_start_loc,
+                        use_qk_l2norm_in_kernel=True,
+                        softplus_beta=1.0,
+                        softplus_threshold=20.0,
+                    )
+
+                # 3. Merge core attention output
+                if spec_sequence_masks is not None and core_attn_out_non_spec is not None:
+                    merged_out = torch.empty(
+                        (1, num_actual_tokens, *core_attn_out_spec.shape[2:]),
+                        dtype=core_attn_out_non_spec.dtype,
+                        device=core_attn_out_non_spec.device,
+                    )
+                    merged_out.index_copy_(1, spec_token_indx, core_attn_out_spec)
+                    merged_out.index_copy_(1, non_spec_token_indx, core_attn_out_non_spec)
+                    core_attn_out[:num_actual_tokens] = merged_out.squeeze(0)
+                elif spec_sequence_masks is not None:
+                    core_attn_out[:num_actual_tokens] = core_attn_out_spec.squeeze(0)
+                else:
+                    core_attn_out[:num_actual_tokens] = core_attn_out_non_spec.squeeze(0)
+
+            Qwen3NextGatedDeltaNet._forward_core = _forward_core_patched
+            logger.info("Patched Qwen3NextGatedDeltaNet._forward_core to use fused sigmoid gating for decode-only path")
+        except Exception as e:
+            logger.warning(f"Failed to patch _forward_core for NPU: {e}")
+
+        # Monkey-patch _update_hybrid_attention_mamba_layout to be a no-op
+        # on Ascend.  The upstream vLLM interleaves K/V blocks via
+        # as_strided_, which makes kv_cache[0] and kv_cache[1] non-contiguous.
+        # torch_npu._npu_reshape_and_cache requires contiguous tensors.
+        # Skipping the interleaving keeps the default (2, num_blocks, ...)
+        # layout where kv_cache[0] (K) and kv_cache[1] (V) are contiguous
+        # slices, matching the reference vllm-ascend approach.
+        try:
+            from vllm_fl.worker.model_runner import ModelRunnerFL
+
+            def _noop_hybrid_layout(self, kv_caches):
+                pass
+
+            ModelRunnerFL._update_hybrid_attention_mamba_layout = (
+                _noop_hybrid_layout
+            )
+            logger.info(
+                "Patched _update_hybrid_attention_mamba_layout to no-op "
+                "for Ascend (keeps contiguous kv_cache slices)"
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to patch _update_hybrid_attention_mamba_layout: {e}"
+            )
+
         if fl_envs.USE_FLAGGEMS:
             import flag_gems
 

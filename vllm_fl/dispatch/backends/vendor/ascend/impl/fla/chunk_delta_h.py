@@ -127,11 +127,12 @@ def chunk_gated_delta_rule_fwd_kernel_h_blockdim64(
         v_new_base = v_new + bos * H * V + i_h * V
 
         last_idx = min((i_t + 1) * BT, T) - 1
-        b_g_last = tl.load(g + bos + i_h * T_max + last_idx)
+        i_hg = i_h // (H // Hg)
+        b_g_last = tl.load(g + bos + i_hg * T_max + last_idx)
 
         offs_t = i_t * BT + tl.arange(0, BT)
         mask_t = offs_t < T
-        g_ptr = g + bos + i_h * T_max
+        g_ptr = g + bos + i_hg * T_max
         b_g = tl.load(g_ptr + offs_t, mask=mask_t, other=0.0)
 
         b_g = safe_exp(b_g_last - b_g)
