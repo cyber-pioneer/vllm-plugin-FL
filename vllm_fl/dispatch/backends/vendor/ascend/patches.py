@@ -144,11 +144,19 @@ def _patch_argsort_for_gdn():
 
 
 def _patch_mm_encoder_attention():
-    """Patch MMEncoderAttention for NPU flash attention."""
+    """Patch MMEncoderAttention to use manual matmul attention on NPU.
+
+    The NPU npu_fused_infer_attention_score kernel only supports head_dim
+    in {64, 128, 192}. The vision encoder may have non-standard head_dim
+    (e.g. 72 for Qwen3.5). F.scaled_dot_product_attention on NPU may also
+    dispatch to the same problematic kernel. Use pure-PyTorch matmul
+    attention instead.
+    """
     try:
-        import torch_npu as _torch_npu_mme
-        import einops as _einops_mme
+        import torch.nn.functional as F
         from vllm.attention.layers.mm_encoder_attention import MMEncoderAttention
+
+        _ATTN_CHUNK = 1024  # query chunk size to bound memory
 
         def _mm_encoder_attn_forward_oot(
             self,
@@ -158,35 +166,53 @@ def _patch_mm_encoder_attention():
             cu_seqlens=None,
             max_seqlen=None,
         ):
+            # query/key/value: [batch, seq_len, num_heads, head_dim]
+            assert cu_seqlens is not None
+
             bsz, q_len = query.size()[:2]
             kv_len = key.size(1)
-            is_reshaped = query.dim() == 4
-            q, k, v = self.reshape_qkv_to_3d(query, key, value, bsz, q_len, kv_len)
-            context_layer = torch.empty_like(q)
-            if cu_seqlens is None:
-                cu_seqlens = torch.arange(
-                    0,
-                    (bsz + 1) * q_len,
-                    step=q_len,
-                    dtype=torch.int32,
-                    device=query.device,
-                )
-            seq_len_cpu = torch.diff(cu_seqlens).to("cpu")
-            _torch_npu_mme._npu_flash_attention_unpad(
-                query=q,
-                key=k,
-                value=v,
-                seq_len=seq_len_cpu,
-                scale_value=self.head_size**-0.5,
-                num_heads=self.num_heads,
-                num_kv_heads=self.num_kv_heads,
-                out=context_layer,
+
+            q, k, v = self.reshape_qkv_to_4d(
+                query, key, value, bsz, q_len, kv_len
             )
-            fmt = "(b s) h d -> b s h d" if is_reshaped else "(b s) h d -> b s (h d)"
-            return _einops_mme.rearrange(context_layer, fmt, b=bsz).contiguous()
+            # q/k/v: [bsz, seq_len, num_heads, head_dim]
+
+            # Split by cu_seqlens and process each sequence
+            lens = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
+            scale = self.scale if self.scale is not None else (
+                self.head_size ** -0.5)
+
+            outputs = []
+            q_chunks = torch.split(q, lens, dim=1)
+            k_chunks = torch.split(k, lens, dim=1)
+            v_chunks = torch.split(v, lens, dim=1)
+            for q_i, k_i, v_i in zip(q_chunks, k_chunks, v_chunks):
+                # [bsz, heads, seq, dim]
+                q_i = q_i.transpose(1, 2).float()
+                k_i = k_i.transpose(1, 2).float()
+                v_i = v_i.transpose(1, 2)
+                seq_len = q_i.shape[2]
+                if seq_len <= _ATTN_CHUNK:
+                    attn_w = torch.matmul(q_i, k_i.transpose(-2, -1)) * scale
+                    attn_w = torch.softmax(attn_w, dim=-1).to(v_i.dtype)
+                    out_i = torch.matmul(attn_w, v_i)
+                else:
+                    # Chunked attention to avoid O(N^2) memory
+                    out_parts = []
+                    for s in range(0, seq_len, _ATTN_CHUNK):
+                        e = min(s + _ATTN_CHUNK, seq_len)
+                        qc = q_i[:, :, s:e]
+                        aw = torch.matmul(qc, k_i.transpose(-2, -1)) * scale
+                        aw = torch.softmax(aw, dim=-1).to(v_i.dtype)
+                        out_parts.append(torch.matmul(aw, v_i))
+                    out_i = torch.cat(out_parts, dim=2)
+                out_i = out_i.transpose(1, 2)  # [bsz, seq, heads, dim]
+                outputs.append(out_i)
+
+            return torch.cat(outputs, dim=1)
 
         MMEncoderAttention.forward_oot = _mm_encoder_attn_forward_oot
-        logger.info("Patched MMEncoderAttention for NPU flash attention")
+        logger.info("Patched MMEncoderAttention for NPU (matmul attention)")
     except Exception as e:
         logger.warning("Failed to patch MMEncoderAttention: %s", e)
 
