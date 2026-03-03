@@ -26,8 +26,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, ClassVar, List, Optional, Tuple, Type
 
+import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from vllm.attention.backends.abstract import (
     AttentionBackend,
     AttentionImpl,
@@ -700,6 +702,73 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 actual_seq_kvlen=attn_metadata.actual_seq_lengths_q,
             )[0]
 
+    def forward_pytorch_ref_attention(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Pure PyTorch reference attention for debugging NPU operator issues.
+
+        Handles PrefillNoCache and ChunkedPrefill with causal masking.
+        For decode, falls back to NPU paged attention.
+        """
+        if attn_metadata.attn_state == AscendAttentionState.DecodeOnly:
+            # Decode: must use paged attention (KV in cache)
+            return self.forward_paged_attention(query, attn_metadata, output)
+
+        num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+        q = query[:num_tokens]  # [T, NH, D]
+
+        if attn_metadata.attn_state == AscendAttentionState.PrefillNoCache:
+            k = key[:num_tokens]   # [T, NKV, D]
+            v = value[:num_tokens] # [T, NKV, D]
+        else:
+            # ChunkedPrefill: K/V are in cache, need to gather from cache
+            # Fall back to NPU FIA for this case
+            return self.forward_fused_infer_attention(
+                query, key, value, attn_metadata, output)
+
+        seq_lengths = attn_metadata.actual_seq_lengths_q
+        num_groups = self.num_heads // self.num_kv_heads
+
+        # Expand KV for GQA
+        if num_groups > 1:
+            k = k.unsqueeze(2).expand(-1, -1, num_groups, -1)
+            k = k.reshape(k.shape[0], self.num_heads, self.head_size)
+            v = v.unsqueeze(2).expand(-1, -1, num_groups, -1)
+            v = v.reshape(v.shape[0], self.num_heads, self.head_size)
+
+        # Process each sequence with causal attention
+        offset = 0
+        for seq_len in seq_lengths:
+            sq = q[offset:offset+seq_len]  # [S, NH, D]
+            sk = k[offset:offset+seq_len]  # [S, NH, D]
+            sv = v[offset:offset+seq_len]  # [S, NH, D]
+
+            # [NH, S, D]
+            sq = sq.transpose(0, 1)
+            sk = sk.transpose(0, 1)
+            sv = sv.transpose(0, 1)
+
+            # Scaled dot-product attention with causal mask
+            # Compute in float32 to avoid bfloat16 issues on NPU
+            attn_weights = torch.matmul(sq.float(), sk.float().transpose(-2, -1)) * self.scale
+            # Causal mask: use -1e9 instead of -inf to avoid FlagGems bfloat16 overflow
+            row_idx = torch.arange(seq_len, device=sq.device)
+            causal_mask = row_idx.unsqueeze(-1) < row_idx.unsqueeze(-2)
+            attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0), -1e9)
+            attn_weights = torch.softmax(attn_weights, dim=-1).to(sq.dtype)
+            attn_out = torch.matmul(attn_weights, sv)  # [NH, S, D]
+            attn_out = attn_out.transpose(0, 1)  # [S, NH, D]
+
+            output[offset:offset+seq_len] = attn_out
+            offset += seq_len
+
+        return output
+
     def forward_impl(
         self,
         query: torch.Tensor,
@@ -711,6 +780,11 @@ class AscendAttentionBackendImpl(AttentionImpl):
     ):
         """Forward implementation dispatching to appropriate attention method."""
         num_tokens = query.shape[0]
+
+        # Pure PyTorch reference attention for debugging
+        if os.environ.get("ASCEND_REF_ATTN", "0") == "1":
+            return self.forward_pytorch_ref_attention(
+                query, key, value, attn_metadata, output)
 
         # Use paged attention for decode-only state
         if (attn_metadata.attn_state == AscendAttentionState.DecodeOnly
@@ -773,10 +847,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
             return output.fill_(0)
 
         # Reshape and cache KV
-        key = key.contiguous()
-        value = value.contiguous()
-        kv_cache = [i.contiguous() for i in kv_cache]
-        key, value = self.reshape_and_cache(key, value, kv_cache, attn_metadata)
+        if key is not None and value is not None:
+            key = key.contiguous()
+            value = value.contiguous()
+            key, value = self.reshape_and_cache(key, value, kv_cache, attn_metadata)
 
         # Handle pooling model branch (encoder attention)
         if attn_metadata.model_runner_type == "pooling":

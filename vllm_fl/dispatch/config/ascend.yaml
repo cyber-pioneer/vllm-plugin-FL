@@ -54,6 +54,13 @@ op_backends:
 # FlagOS operator blacklist
 # These operators will NOT use FlagOS implementation even if FlagOS is enabled.
 flagos_blacklist:
+  - masked_scatter_
+  - scatter_add_
+  - ones
+  - ones_like
+  - zeros
+  - zeros_like
+  - zero_
   - isclose
   - allclose
   - mean_dim
@@ -108,6 +115,7 @@ flagos_blacklist:
   - _flash_attention_forward
   - scatter
   - scatter_
+  - embedding
 
 # OOT (Out-of-Tree) operator blacklist
 # These operators will NOT be registered as OOT replacements.

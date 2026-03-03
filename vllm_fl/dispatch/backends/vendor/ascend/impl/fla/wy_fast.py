@@ -63,10 +63,10 @@ def recompute_w_u_fwd_kernel(
 
         offs_t_2d = global_offs_t[:, None]
         offs_bt = tl.arange(0, BT)[None, :]
+        i_hg = i_h // (H // Hg)
         ptr_A = A + (bos * H + i_h) * BT + offs_t_2d * (H * BT) + offs_bt * 1
         mask_A = mask_t[:, None]
         b_A = tl.load(ptr_A, mask=mask_A, other=0.0).to(tl.float32)
-
         ptr_g = g + bos + i_h * T_max + global_offs_t
         b_g = tl.exp(tl.load(ptr_g, mask=mask_t, other=0.0)).to(tl.float32)
 

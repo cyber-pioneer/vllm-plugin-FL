@@ -195,10 +195,17 @@ def fused_recurrent_gated_delta_rule_fwd(
     num_accepted_tokens: torch.Tensor | None = None,
     use_qk_l2norm_in_kernel: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    import os, logging
+    if os.environ.get("FLA_DEBUG_SHAPES", "0") == "1":
+        _slog = logging.getLogger("fla.fused_recurrent.shapes")
+        _slog.setLevel(logging.INFO)
+        if not _slog.handlers:
+            _slog.addHandler(logging.StreamHandler())
+        _slog.info(f"fused_recurrent_fwd ENTRY: q={q.shape} k={k.shape} v={v.shape} g={g.shape} beta={beta.shape} initial_state={initial_state.shape} cu_seqlens={cu_seqlens} ssm_state_indices={ssm_state_indices.shape if ssm_state_indices is not None else None}")
     B, T, H, K, V = *k.shape, v.shape[-1]
     HV = v.shape[2]
     N = B if cu_seqlens is None else len(cu_seqlens) - 1
-    BK, BV = triton.next_power_of_2(K), min(triton.next_power_of_2(V), 8)
+    BK, BV = triton.next_power_of_2(K), min(triton.next_power_of_2(V), 64)
     NK, NV = triton.cdiv(K, BK), triton.cdiv(V, BV)
     assert NK == 1, "NK > 1 is not supported yet"
     num_stages = 3
