@@ -700,6 +700,96 @@ class AscendAttentionBackendImpl(AttentionImpl):
                 actual_seq_kvlen=attn_metadata.actual_seq_lengths_q,
             )[0]
 
+    def forward_chunked_prefill_ref(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attn_metadata: AscendMetadata,
+        output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Reference ChunkedPrefill attention reading KV from cache.
+
+        Used when npu_fused_infer_attention_score doesn't support the
+        current head_dim with block tables (head_dim > 192).
+        """
+        num_tokens = attn_metadata.actual_seq_lengths_q[-1]
+        q = query[:num_tokens]  # [T, NH, D]
+
+        seq_lens = attn_metadata.seq_lens  # full sequence lengths
+        query_lens = attn_metadata.actual_seq_lengths_q
+        block_table = attn_metadata.block_tables
+        num_groups = self.num_heads // self.num_kv_heads
+
+        # Reconstruct actual query lengths per sequence from cumulative
+        # actual_seq_lengths_q is cumulative
+        if len(query_lens) > 1:
+            per_seq_q_lens = []
+            for i in range(len(query_lens)):
+                prev = query_lens[i - 1] if i > 0 else 0
+                per_seq_q_lens.append(query_lens[i] - prev)
+        else:
+            per_seq_q_lens = [query_lens[0]]
+
+        q_offset = 0
+        for seq_idx in range(len(per_seq_q_lens)):
+            q_len = per_seq_q_lens[seq_idx]
+            if q_len == 0:
+                continue
+
+            kv_len = int(seq_lens[seq_idx])
+            sq = q[q_offset:q_offset + q_len]  # [q_len, NH, D]
+
+            # Gather KV from cache using block table
+            blocks = block_table[seq_idx]
+            num_kv_blocks = (kv_len + self.key_cache.shape[1] - 1) // self.key_cache.shape[1]
+            block_size = self.key_cache.shape[1]
+
+            # Gather all KV tokens from cache blocks
+            kv_tokens_k = []
+            kv_tokens_v = []
+            remaining = kv_len
+            for b in range(num_kv_blocks):
+                block_idx = int(blocks[b])
+                tokens_in_block = min(remaining, block_size)
+                kv_tokens_k.append(self.key_cache[block_idx, :tokens_in_block])
+                kv_tokens_v.append(self.value_cache[block_idx, :tokens_in_block])
+                remaining -= tokens_in_block
+            sk = torch.cat(kv_tokens_k, dim=0)  # [kv_len, NKV, D]
+            sv = torch.cat(kv_tokens_v, dim=0)  # [kv_len, NKV, D]
+
+            # Expand KV for GQA
+            if num_groups > 1:
+                sk = sk.unsqueeze(2).expand(-1, -1, num_groups, -1)
+                sk = sk.reshape(sk.shape[0], self.num_heads, self.head_size)
+                sv = sv.unsqueeze(2).expand(-1, -1, num_groups, -1)
+                sv = sv.reshape(sv.shape[0], self.num_heads, self.head_size)
+
+            # [NH, q_len, D] and [NH, kv_len, D]
+            sq_t = sq.transpose(0, 1).float()
+            sk_t = sk.transpose(0, 1).float()
+            sv_t = sv.transpose(0, 1)
+
+            # Scaled dot-product
+            attn_weights = torch.matmul(sq_t, sk_t.transpose(-2, -1)) * self.scale
+
+            # Causal mask: query tokens attend to KV positions
+            # Query position i corresponds to KV position (kv_len - q_len + i)
+            q_pos = torch.arange(q_len, device=sq.device) + (kv_len - q_len)
+            kv_pos = torch.arange(kv_len, device=sq.device)
+            causal_mask = q_pos.unsqueeze(-1) < kv_pos.unsqueeze(-2)
+            attn_weights = attn_weights.masked_fill(
+                causal_mask.unsqueeze(0), -1e9)
+
+            attn_weights = torch.softmax(attn_weights, dim=-1).to(sq.dtype)
+            attn_out = torch.matmul(attn_weights, sv_t)  # [NH, q_len, D]
+            attn_out = attn_out.transpose(0, 1)  # [q_len, NH, D]
+
+            output[q_offset:q_offset + q_len] = attn_out
+            q_offset += q_len
+
+        return output
+
     def forward_impl(
         self,
         query: torch.Tensor,
@@ -716,6 +806,15 @@ class AscendAttentionBackendImpl(AttentionImpl):
         if (attn_metadata.attn_state == AscendAttentionState.DecodeOnly
                 and self.sliding_window is None):
             output = self.forward_paged_attention(query, attn_metadata, output)
+        elif (self.head_size > 192
+              and attn_metadata.attn_state not in (
+                  AscendAttentionState.PrefillNoCache,
+                  AscendAttentionState.DecodeOnly,
+              )):
+            # npu_fused_infer_attention_score with block tables (TND layout)
+            # only supports head_dim <= 192. Fall back to reference impl.
+            output = self.forward_chunked_prefill_ref(
+                query, key, value, attn_metadata, output)
         else:
             output = self.forward_fused_infer_attention(
                 query, key, value, attn_metadata, output)
@@ -773,10 +872,10 @@ class AscendAttentionBackendImpl(AttentionImpl):
             return output.fill_(0)
 
         # Reshape and cache KV
-        key = key.contiguous()
-        value = value.contiguous()
-        kv_cache = [i.contiguous() for i in kv_cache]
-        key, value = self.reshape_and_cache(key, value, kv_cache, attn_metadata)
+        if key is not None and value is not None:
+            key = key.contiguous()
+            value = value.contiguous()
+            key, value = self.reshape_and_cache(key, value, kv_cache, attn_metadata)
 
         # Handle pooling model branch (encoder attention)
         if attn_metadata.model_runner_type == "pooling":

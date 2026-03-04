@@ -150,6 +150,11 @@ class PlatformFL(Platform):
         if compilation_config.compile_sizes is None:
             compilation_config.compile_sizes = []
 
+        # NPU does not support the inductor backend (no registered scheduling
+        # constructor for the 'npu' device), so fall back to eager.
+        if cls.device_type == "npu" and compilation_config.backend in ("", "inductor"):
+            compilation_config.backend = "eager"
+
         if (
             parallel_config.data_parallel_size > 1
             and compilation_config.cudagraph_mode != CUDAGraphMode.NONE

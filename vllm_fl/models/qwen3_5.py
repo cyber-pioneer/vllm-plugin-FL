@@ -5,6 +5,7 @@
 
 import typing
 from collections.abc import Callable, Iterable
+from itertools import islice
 
 import torch
 from einops import rearrange
@@ -369,6 +370,7 @@ class Qwen3_5DecoderLayer(Qwen3NextDecoderLayer):
         "positions": -1,
         "intermediate_tensors": 0,
         "inputs_embeds": 0,
+        "deepstack_input_embeds": 0,
     }
 )
 class Qwen3_5Model(Qwen3NextModel):
@@ -411,6 +413,52 @@ class Qwen3_5Model(Qwen3NextModel):
             )
         else:
             self.norm = PPMissingLayer()
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        positions: torch.Tensor,
+        intermediate_tensors: IntermediateTensors | None = None,
+        inputs_embeds: torch.Tensor | None = None,
+        deepstack_input_embeds: IntermediateTensors | None = None,
+    ) -> torch.Tensor:
+        if get_pp_group().is_first_rank:
+            if inputs_embeds is not None:
+                hidden_states = inputs_embeds
+            else:
+                hidden_states = self.embed_input_ids(input_ids)
+            residual = None
+        else:
+            assert intermediate_tensors is not None
+            hidden_states = intermediate_tensors["hidden_states"]
+            residual = intermediate_tensors["residual"]
+
+        for layer_idx, layer in islice(
+            enumerate(self.layers), self.start_layer, self.end_layer
+        ):
+            hidden_states, residual = layer(
+                positions=positions,
+                hidden_states=hidden_states,
+                residual=residual,
+            )
+
+            if (
+                deepstack_input_embeds is not None
+                and layer_idx in range(0, len(deepstack_input_embeds))
+            ):
+                hidden_states = (
+                    hidden_states
+                    + deepstack_input_embeds[
+                        f"deepstack_input_embeds_{layer_idx}"
+                    ]
+                )
+
+        if not get_pp_group().is_last_rank:
+            return IntermediateTensors(
+                {"hidden_states": hidden_states, "residual": residual}
+            )
+        hidden_states, _ = self.norm(hidden_states, residual)
+        return hidden_states
 
     def load_fused_expert_weights(
         self,
@@ -695,10 +743,15 @@ class Qwen3_5MoeForCausalLM(
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
+        deepstack_input_embeds: IntermediateTensors | None = None,
         **kwargs: object,
     ):
         hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
+            input_ids,
+            positions,
+            intermediate_tensors,
+            inputs_embeds,
+            deepstack_input_embeds=deepstack_input_embeds,
         )
         return hidden_states
 
@@ -849,6 +902,7 @@ class Qwen3_5MoeForConditionalGeneration(
             self.deepstack_input_embeds = None
         self.visual_dim = config.vision_config.out_hidden_size
         self.multiscale_dim = self.visual_dim * self.deepstack_num_level
+        self._deepstack_pending = False
 
         # Set MoE hyperparameters
         self.set_moe_parameters()
@@ -861,8 +915,20 @@ class Qwen3_5MoeForConditionalGeneration(
         is_multimodal: torch.Tensor | None = None,
         handle_oov_mm_token: bool = False,
     ) -> torch.Tensor:
+        # On NPU, embedding lookup with high multimodal placeholder token IDs
+        # (near end of 248k vocab) triggers DDR out-of-range errors.
+        # Clamp all multimodal token IDs to 0 before embedding. They will be
+        # overwritten by _merge_multimodal_embeddings anyway.
+        if (multimodal_embeddings is not None
+                and len(multimodal_embeddings) > 0
+                and is_multimodal is not None):
+            safe_ids = input_ids.clone()
+            safe_ids[is_multimodal] = 0
+        else:
+            safe_ids = input_ids
+
         inputs_embeds = self._embed_text_input_ids(
-            input_ids,
+            safe_ids,
             self.language_model.embed_input_ids,
             is_multimodal=is_multimodal,
             handle_oov_mm_token=handle_oov_mm_token,
@@ -873,11 +939,27 @@ class Qwen3_5MoeForConditionalGeneration(
 
         is_multimodal = _require_is_multimodal(is_multimodal)
 
+        if self.use_deepstack:
+            (
+                deepstack_input_embeds,
+                multimodal_embeddings,
+            ) = self._compute_deepstack_embeds(
+                inputs_embeds=inputs_embeds,
+                multimodal_embeddings=multimodal_embeddings,
+                is_multimodal=is_multimodal,
+            )
+        else:
+            deepstack_input_embeds = None
+
         inputs_embeds = _merge_multimodal_embeddings(
             inputs_embeds=inputs_embeds,
             multimodal_embeddings=multimodal_embeddings,
             is_multimodal=is_multimodal,
         )
+
+        if deepstack_input_embeds is not None:
+            self._set_deepstack_input_embeds(deepstack_input_embeds)
+            self._deepstack_pending = True
 
         return inputs_embeds
 
@@ -892,12 +974,43 @@ class Qwen3_5MoeForConditionalGeneration(
         if intermediate_tensors is not None:
             inputs_embeds = None
 
-        hidden_states = self.language_model.model(
+        if (
+            self.use_deepstack
+            and self._deepstack_pending
+            and inputs_embeds is not None
+            and get_pp_group().is_first_rank
+        ):
+            self._deepstack_pending = False
+            deepstack_input_embeds = self._get_deepstack_input_embeds(
+                inputs_embeds.size(0)
+            )
+            # Ensure deepstack tensors match device and dtype of
+            # inputs_embeds (buffer may be on CPU with float32).
+            deepstack_input_embeds = IntermediateTensors({
+                k: v.to(device=inputs_embeds.device,
+                        dtype=inputs_embeds.dtype)
+                for k, v in deepstack_input_embeds.items()
+            })
+        else:
+            deepstack_input_embeds = None
+
+        model_kwargs = dict(
             input_ids=input_ids,
             positions=positions,
             intermediate_tensors=intermediate_tensors,
             inputs_embeds=inputs_embeds,
         )
+        if deepstack_input_embeds is not None:
+            model_kwargs["deepstack_input_embeds"] = deepstack_input_embeds
+
+        hidden_states = self.language_model.model(**model_kwargs)
+
+        if (
+            deepstack_input_embeds is not None
+            and inputs_embeds is not None
+            and get_pp_group().is_first_rank
+        ):
+            self._clear_deepstack_input_embeds(inputs_embeds.size(0))
 
         return hidden_states
 
