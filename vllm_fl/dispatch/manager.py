@@ -29,6 +29,39 @@ logger = logging.getLogger(__name__)
 # Debug printing control
 _DISPATCH_DEBUG = os.getenv("VLLM_FL_DISPATCH_DEBUG", "0") == "1"
 
+# Also record which dispatch-level ops use the DEFAULT (FlagOS) backend into the
+# same file used by FlagGems op recording, so users can inspect runtime op usage
+# in one place.
+_FLAGOS_OPLIST_LOCK = threading.Lock()
+_RECORDED_FLAGOS_OPS: Set[Tuple[str, str]] = set()  # (op_name, impl_id)
+
+
+def _get_flaggems_oplist_path() -> str:
+    return os.environ.get(
+        "FLAGGEMS_ENABLE_OPLIST_PATH", "/tmp/flaggems_enable_oplist.txt"
+    )
+
+
+def _record_default_flagos_op(op_name: str, impl: OpImpl) -> None:
+    """Append a single-line record for default.flagos ops (best-effort)."""
+    if impl.impl_id != "default.flagos":
+        return
+    key = (op_name, impl.impl_id)
+    with _FLAGOS_OPLIST_LOCK:
+        if key in _RECORDED_FLAGOS_OPS:
+            return
+        _RECORDED_FLAGOS_OPS.add(key)
+        path = _get_flaggems_oplist_path()
+        try:
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(
+                    f"[DEBUG] vllm_fl.dispatch.ops.{op_name}: DEFAULT_FLAGOS {impl.impl_id}\n"
+                )
+        except Exception:
+            # Never break inference/serving due to diagnostics I/O.
+            return
+
 
 @dataclass
 class _OpManagerState:
@@ -485,6 +518,8 @@ class OpManager:
                                         f"Op '{op_name}' switched from '{last_impl_id}' to '{impl_id}' "
                                         f"(kind={impl.kind.value}, vendor={impl.vendor})"
                                     )
+                                if impl.kind == BackendImplKind.DEFAULT:
+                                    _record_default_flagos_op(op_name, impl)
                                 break
                         self._called_ops[op_name] = impl_id
 
@@ -526,6 +561,8 @@ class OpManager:
                                         f"Op '{op_name}' switched from '{last_impl_id}' to '{impl.impl_id}' "
                                         f"(kind={impl.kind.value}, vendor={impl.vendor})"
                                     )
+                                if impl.kind == BackendImplKind.DEFAULT:
+                                    _record_default_flagos_op(op_name, impl)
                                 self._called_ops[op_name] = impl.impl_id
                 else:
                     # Always log fallback attempts (these are important runtime events)
@@ -540,6 +577,8 @@ class OpManager:
                 if idx > 0:
                     with self._lock:
                         self._called_ops[op_name] = impl.impl_id
+                if impl.kind == BackendImplKind.DEFAULT:
+                    _record_default_flagos_op(op_name, impl)
 
                 return result
 
