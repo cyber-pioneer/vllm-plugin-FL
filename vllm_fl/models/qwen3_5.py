@@ -69,6 +69,7 @@ from vllm.model_executor.models.qwen3_next import (
     QwenNextMixtureOfExperts,
 )
 from vllm_fl.configs.qwen3_5_moe import Qwen3_5MoeConfig, Qwen3_5MoeTextConfig
+import vllm_fl.models.qwen3_next # for error ''_OpNamespace' 'vllm' object has no attribute 'gdn_attention_core''
 
 logger = init_logger(__name__)
 

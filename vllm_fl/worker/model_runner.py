@@ -85,6 +85,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import group_mm_kwargs_by_modality
+from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingType
 from vllm.sequence import IntermediateTensors
@@ -215,7 +216,6 @@ if TYPE_CHECKING:
 
 from vllm_fl.compilation.graph import GraphWrapper
 
-
 logger = init_logger(__name__)
 
 # ── IO inspect/dump step tracking ──
@@ -251,7 +251,6 @@ PerLayerAttnMetadata: TypeAlias = list[AttnMetadataDict] | AttnMetadataDict
 
 # Wrapper for ModelRunnerOutput to support overlapped execution.
 class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
-
     def __init__(
         self,
         model_runner_output: ModelRunnerOutput,
@@ -310,7 +309,6 @@ class AsyncGPUModelRunnerOutput(AsyncModelRunnerOutput):
                 self._invalid_req_indices,
                 return_cu_num_tokens=self._logprobs_tensors_cpu is not None,
             )
-
 
         output = self._model_runner_output
         output.sampled_token_ids = valid_sampled_token_ids
@@ -1481,7 +1479,6 @@ class ModelRunnerFL(
         self.seq_lens.np[num_reqs:].fill(0)
         self.seq_lens.copy_to_gpu()
 
-
         num_tokens = [self.requests[r].num_tokens for r in self.input_batch.req_ids]
         num_tokens_np = np.array(num_tokens, dtype=np.int32)
 
@@ -1600,7 +1597,7 @@ class ModelRunnerFL(
 
         attn_metadata: PerLayerAttnMetadata = {}
         if ubatch_slices is not None:
-            attn_metadata = [dict() for _ in range(len(ubatch_slices))]
+            attn_metadata = [{} for _ in range(len(ubatch_slices))]
 
         if for_cudagraph_capture:
             # For some attention backends (e.g. FA) with sliding window models we need
@@ -3967,7 +3964,7 @@ class ModelRunnerFL(
     ) -> dict[str, int]:
         try:
             if logits is None:
-                return {req_id: 0 for req_id in self.input_batch.req_ids}
+                return dict.fromkeys(self.input_batch.req_ids, 0)
 
             num_nans_in_logits = {}
             num_nans_for_index = logits.isnan().sum(dim=-1).cpu().numpy()
@@ -4272,7 +4269,6 @@ class ModelRunnerFL(
                 num_tokens_padded = ubatch_slices_padded[0].num_tokens
                 if num_tokens_across_dp is not None:
                     num_tokens_across_dp[:] = num_tokens_padded
-
             with (
                 self.maybe_randomize_inputs(input_ids, inputs_embeds),
                 set_forward_context(
@@ -5288,8 +5284,7 @@ class ModelRunnerFL(
                     )
                     # Maintain original KV shape view.
                     inv_order = [
-                        kv_cache_stride_order.index(i)
-                        for i in range(len(kv_cache_stride_order))
+                        kv_cache_stride_order.index(i) for i in range(len(kv_cache_stride_order))
                     ]
                     kv_caches[layer_name] = (
                         kv_cache_raw_tensors[layer_name]
