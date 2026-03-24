@@ -12,11 +12,6 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Set, Tuple
 
-try:
-    import fcntl
-except Exception:  # pragma: no cover
-    fcntl = None
-
 from .registry import OpRegistry
 from .policy import SelectionPolicy, get_policy
 from .types import OpImpl, BackendImplKind, match_token
@@ -34,45 +29,43 @@ logger = logging.getLogger(__name__)
 # Debug printing control
 _DISPATCH_DEBUG = os.getenv("VLLM_FL_DISPATCH_DEBUG", "0") == "1"
 
-# Also record which dispatch-level ops use the DEFAULT (FlagOS) backend into the
-# same file used by FlagGems op recording, so users can inspect runtime op usage
-# in one place.
+# Record which dispatch-level ops are used into the FlagGems oplist file,
+# so users can inspect runtime op usage in one place.
 _FLAGOS_OPLIST_LOCK = threading.Lock()
 _RECORDED_FLAGOS_OPS: Set[Tuple[str, str]] = set()  # (op_name, impl_id)
 
 
-def _get_flaggems_oplist_path() -> str:
-    return os.environ.get(
-        "FLAGGEMS_ENABLE_OPLIST_PATH", "/tmp/flaggems_enable_oplist.txt"
-    )
-
-
 def _record_default_flagos_op(op_name: str, impl: OpImpl) -> None:
-    """Append a single-line record for default.flagos ops (best-effort)."""
-    if impl.impl_id != "default.flagos":
-        return
-    line = f"[DEBUG] vllm_fl.dispatch.ops.{op_name}: DEFAULT_FLAGOS {impl.impl_id}\n"
+    """Record dispatch-level op usage into the FlagGems oplist file.
+
+    Writes through the FlagGems logger's file handlers directly so that the
+    record goes via the same file descriptor that FlagGems itself uses.  This
+    avoids a file-position race between two independent file descriptors (the
+    old ``open(path, "a+")`` approach vs FlagGems' ``FileHandler(mode="w")``)
+    that caused dispatch entries to be silently overwritten in short-lived
+    processes such as offline inference.
+    """
     key = (op_name, impl.impl_id)
     with _FLAGOS_OPLIST_LOCK:
-        path = _get_flaggems_oplist_path()
+        if key in _RECORDED_FLAGOS_OPS:
+            return
         try:
-            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "a+", encoding="utf-8") as f:
-                # Use advisory lock to reduce duplicate writes between workers.
-                if fcntl is not None:
-                    try:
-                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-                    except Exception:
-                        pass
-
-                f.seek(0)
-                if line in f.read():
-                    _RECORDED_FLAGOS_OPS.add(key)
-                    return
-
-                f.seek(0, os.SEEK_END)
-                f.write(line)
-                f.flush()
+            fg_logger = logging.getLogger("flag_gems")
+            line = (
+                f"[DEBUG] vllm_fl.dispatch.ops.{op_name}: {impl.impl_id}"
+            )
+            # Write directly through each FlagGems-owned FileHandler so
+            # that the file position stays synchronised with FlagGems'
+            # own writes.  Using ``logger.debug()`` would prepend an
+            # unwanted ``[DEBUG] flag_gems.<funcName>:`` prefix added by
+            # the handler's formatter.
+            for handler in fg_logger.handlers:
+                if (
+                    isinstance(handler, logging.FileHandler)
+                    and getattr(handler, "_flaggems_owned", False)
+                ):
+                    handler.stream.write(line + "\n")
+                    handler.stream.flush()
             _RECORDED_FLAGOS_OPS.add(key)
         except Exception:
             # Never break inference/serving due to diagnostics I/O.
