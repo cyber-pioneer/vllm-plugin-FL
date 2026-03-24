@@ -12,6 +12,11 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional, Set, Tuple
 
+try:
+    import fcntl
+except Exception:  # pragma: no cover
+    fcntl = None
+
 from .registry import OpRegistry
 from .policy import SelectionPolicy, get_policy
 from .types import OpImpl, BackendImplKind, match_token
@@ -50,20 +55,24 @@ def _record_default_flagos_op(op_name: str, impl: OpImpl) -> None:
     key = (op_name, impl.impl_id)
     with _FLAGOS_OPLIST_LOCK:
         path = _get_flaggems_oplist_path()
-        if key in _RECORDED_FLAGOS_OPS:
-            # If the file was rotated/truncated after an earlier write in this
-            # process, allow re-emitting the line so users can still observe it.
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    if line in f:
-                        return
-            except Exception:
-                # If we cannot read the file, continue and try appending.
-                pass
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-            with open(path, "a", encoding="utf-8") as f:
+            with open(path, "a+", encoding="utf-8") as f:
+                # Use advisory lock to reduce duplicate writes between workers.
+                if fcntl is not None:
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                    except Exception:
+                        pass
+
+                f.seek(0)
+                if line in f.read():
+                    _RECORDED_FLAGOS_OPS.add(key)
+                    return
+
+                f.seek(0, os.SEEK_END)
                 f.write(line)
+                f.flush()
             _RECORDED_FLAGOS_OPS.add(key)
         except Exception:
             # Never break inference/serving due to diagnostics I/O.
