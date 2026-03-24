@@ -46,18 +46,25 @@ def _record_default_flagos_op(op_name: str, impl: OpImpl) -> None:
     """Append a single-line record for default.flagos ops (best-effort)."""
     if impl.impl_id != "default.flagos":
         return
+    line = f"[DEBUG] vllm_fl.dispatch.ops.{op_name}: DEFAULT_FLAGOS {impl.impl_id}\n"
     key = (op_name, impl.impl_id)
     with _FLAGOS_OPLIST_LOCK:
-        if key in _RECORDED_FLAGOS_OPS:
-            return
-        _RECORDED_FLAGOS_OPS.add(key)
         path = _get_flaggems_oplist_path()
+        if key in _RECORDED_FLAGOS_OPS:
+            # If the file was rotated/truncated after an earlier write in this
+            # process, allow re-emitting the line so users can still observe it.
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    if line in f:
+                        return
+            except Exception:
+                # If we cannot read the file, continue and try appending.
+                pass
         try:
             os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
             with open(path, "a", encoding="utf-8") as f:
-                f.write(
-                    f"[DEBUG] vllm_fl.dispatch.ops.{op_name}: DEFAULT_FLAGOS {impl.impl_id}\n"
-                )
+                f.write(line)
+            _RECORDED_FLAGOS_OPS.add(key)
         except Exception:
             # Never break inference/serving due to diagnostics I/O.
             return
