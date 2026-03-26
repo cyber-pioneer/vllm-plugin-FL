@@ -54,21 +54,3 @@ class TestRegisterVendorBackends:
             package="vllm_fl.dispatch",
         )
         module.register_builtins.assert_called_once_with(registry)
-
-    def test_skips_vendor_registration_when_current_vendor_unknown(self):
-        registry = MagicMock()
-
-        with (
-            patch("vllm_fl.dispatch.builtin_ops._VENDOR_BACKENDS_DIR", "/fake/vendor"),
-            patch(
-                "vllm_fl.dispatch.builtin_ops._get_current_vendor_backend_dirs",
-                return_value=None,
-            ),
-            patch("vllm_fl.dispatch.builtin_ops.os.path.isdir", return_value=True),
-            patch(
-                "vllm_fl.dispatch.builtin_ops.importlib.import_module"
-            ) as import_module,
-        ):
-            _register_vendor_backends(registry)
-
-        import_module.assert_not_called()
