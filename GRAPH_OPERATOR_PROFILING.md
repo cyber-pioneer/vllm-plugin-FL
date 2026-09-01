@@ -229,36 +229,95 @@ Baseline results:
 /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_baseline/results/
 ```
 
+## Reproduce the Qwen 4096/256 four-scenario validation
+
+Use the Qwen 4096/256 request config for every row:
+
+| Suffix | Server environment |
+|---|---|
+| `_plugin_graph_4096_256` | default |
+| `_plugin_eager_4096_256` | `PROFILE_EXECUTION_MODE=eager` |
+| `_baseline_graph_4096_256` | `VLLM_PLUGINS=""` |
+| `_baseline_eager_4096_256` | `VLLM_PLUGINS="" PROFILE_EXECUTION_MODE=eager` |
+
+For each row, start the server with its environment and suffix:
+
+```bash
+<server-environment> \
+PROFILE_RUN_SUFFIX=<suffix> \
+bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+```
+
+After the server is ready, run:
+
+```bash
+PROFILE_RUN_SUFFIX=<suffix> \
+bash tools/graph_operator_profile/profile_request.sh \
+  qwen3_6_35b_a3b \
+  tools/graph_operator_profile/qwen3_6_35b_a3b_request_4096_256.json
+```
+
+The four validated run directories use the suffixes in the table. The
+consolidated report and complete pairwise unions are under:
+
+```text
+/vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_4096_256_four_scenario/
+```
+
+An explicit empty `VLLM_PLUGINS` value prevents loading plugin entry points.
+Confirm this from both the server process environment and the absence of
+`Loading plugin fl` and `Platform plugin fl is activated` in `serve.log`.
+
 ## Output files
 
-`kernel_summary.csv` is the compact physical inventory. It has one row per
-kernel and the following columns:
+`kernel_summary.csv` is the compact operator-to-kernel aggregate. It has one
+row per unique `(operator_name, kernel_name)` relation and the following
+columns:
 
+- `operator_name`
 - `kernel_name`
-- `total_call_count`
-- `total_time_us`
+- `kernel_call_count`
+- `kernel_time_us`
 - `percent`
+
+`kernel_time_us` is the summed runtime kernel duration for that relation.
+`percent` uses the sum of all rank-0 runtime kernel durations as its
+denominator. A kernel related to multiple operators is split into separate
+rows, but each physical event contributes to exactly one row, so aggregating
+the CSV by `kernel_name` preserves the physical kernel count and time without
+duplication.
 
 `percent` has three digits after the decimal point. Values smaller than
 `0.001%` are emitted as `<0.001%`.
+
+`operator_list.csv` is the deduplicated relation inventory:
+
+- `operator_id`
+- `operator_name`
+- `kernel_name`
+
+Operator IDs are stable one-based integers assigned by sorted operator name.
+All kernels related to one operator use the same ID. An unattributed kernel is
+written as `null,null,<kernel_name>`. Each operator/kernel relation appears
+exactly once.
 
 `kernel_details_report.csv` is the detailed aggregate. It has one row per
 kernel/operator/shape/dtype/mapping-status combination and the following
 columns:
 
+- `operator_name`
 - `kernel_name`
 - `variant_index`: stable one-based index within a kernel
 - `mapping_status`
-- `operator_name`
 - `input_shapes`
 - `input_dtypes`
 - `candidate_operators`
 - `kernel_event_count`
 - `kernel_time_us`
 
-The summary contains each kernel once. The details report can contain multiple
-rows for one kernel, but its distinct `kernel_name` values have exactly the
-same order and set as the summary.
+The summary and details report can contain multiple rows for one kernel.
+Their distinct `kernel_name` sets equal the physical kernel set, and their
+per-kernel count and time totals are identical.
 
 Repeated physical events with the same kernel, mapping status, operator,
 shape, dtype, and candidate metadata are represented by one aggregate row.
@@ -287,11 +346,14 @@ duplicated as separate rows.
 coverage, and conservation results. A valid extraction requires every boolean
 in `conservation` to be `true`. The checks prove:
 
-- summary and details kernel sets and order are identical
+- summary, details, and physical inventory kernel sets are identical
 - trace, summary, report, and mapping-status event counts are identical
 - trace, summary, report, and mapping-status kernel times are identical
 - every individual kernel preserves its count and time in all report variants
-- re-reading both CSV files preserves every kernel, count, and duration
+- summary operator/kernel relations are unique and equal the details relations
+- operator-list relations are unique and equal the summary relations
+- one operator always maps to one stable ID
+- re-reading all CSV files preserves every kernel, count, and duration
 
 Kernel time is stored internally as integer nanoseconds and emitted in
 microseconds. This avoids floating-point drift in aggregate conservation.

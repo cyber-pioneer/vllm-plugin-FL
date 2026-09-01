@@ -43,12 +43,16 @@ def load_run(run_dir, scan_cpu_operators):
     result_dir = run_dir / "results"
     summary = read_json(result_dir / "summary.json")
     metrics = read_json(run_dir / "profiled_metrics.json")
-    kernels = {}
+    kernels = defaultdict(lambda: {"call_count": 0, "time_us": 0.0})
     for row in read_csv(result_dir / "kernel_summary.csv"):
-        kernels[row["kernel_name"]] = {
-            "call_count": int(row["total_call_count"]),
-            "time_us": float(row["total_time_us"]),
-        }
+        count_key = (
+            "kernel_call_count" if "kernel_call_count" in row else "total_call_count"
+        )
+        time_key = "kernel_time_us" if "kernel_time_us" in row else "total_time_us"
+        kernel = kernels[row["kernel_name"]]
+        kernel["call_count"] += int(row[count_key])
+        kernel["time_us"] += float(row[time_key])
+    kernels = dict(kernels)
 
     operators = defaultdict(
         lambda: {

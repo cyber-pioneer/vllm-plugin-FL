@@ -403,16 +403,61 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> 
     temporary.replace(path)
 
 
-def summary_csv_rows(kernel_summary: dict[str, Any]) -> list[dict[str, Any]]:
+def summary_csv_rows(
+    kernel_report: dict[str, Any], kernel_total_ns: int
+) -> list[dict[str, Any]]:
+    relation_count: Counter[tuple[str | None, str]] = Counter()
+    relation_ns: Counter[tuple[str | None, str]] = Counter()
+    for kernel_name, report in kernel_report.items():
+        for operator, variants in report["operator_variants"].items():
+            for row in variants:
+                key = (operator, kernel_name)
+                relation_count[key] += row["kernel_event_count"]
+                relation_ns[key] += round(row["kernel_time_us"] * 1000)
+        for row in report["unattributed_variants"]:
+            key = (None, kernel_name)
+            relation_count[key] += row["kernel_event_count"]
+            relation_ns[key] += round(row["kernel_time_us"] * 1000)
+
+    ordered = sorted(
+        relation_count,
+        key=lambda key: (
+            key[0] is None,
+            key[0] or "",
+            -relation_ns[key],
+            key[1],
+        ),
+    )
     return [
         {
-            "kernel_name": name,
-            "total_call_count": values["total_call_count"],
-            "total_time_us": values["total_time_us"],
-            "percent": values["percent"],
+            "operator_name": operator if operator is not None else "null",
+            "kernel_name": kernel_name,
+            "kernel_call_count": relation_count[(operator, kernel_name)],
+            "kernel_time_us": ns_to_us(relation_ns[(operator, kernel_name)]),
+            "percent": format_percent(
+                relation_ns[(operator, kernel_name)], kernel_total_ns
+            ),
         }
-        for name, values in kernel_summary.items()
+        for operator, kernel_name in ordered
     ]
+
+
+def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    operators = sorted(
+        {row["operator_name"] for row in summary_rows if row["operator_name"] != "null"}
+    )
+    operator_ids = {operator: index for index, operator in enumerate(operators, 1)}
+    rows: list[dict[str, Any]] = []
+    for summary_row in summary_rows:
+        operator = summary_row["operator_name"]
+        rows.append(
+            {
+                "operator_id": operator_ids.get(operator, "null"),
+                "operator_name": operator,
+                "kernel_name": summary_row["kernel_name"],
+            }
+        )
+    return rows
 
 
 def details_csv_rows(kernel_report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -435,10 +480,10 @@ def details_csv_rows(kernel_report: dict[str, Any]) -> list[dict[str, Any]]:
         for variant_index, (operator, row) in enumerate(variants, start=1):
             rows.append(
                 {
+                    "operator_name": operator if operator is not None else "null",
                     "kernel_name": kernel_name,
                     "variant_index": variant_index,
                     "mapping_status": row["mapping_status"],
-                    "operator_name": operator if operator is not None else "null",
                     "input_shapes": canonical(row["input_shapes"]),
                     "input_dtypes": canonical(row["input_dtypes"]),
                     "candidate_operators": canonical(row.get("candidate_operators")),
@@ -456,15 +501,18 @@ def csv_us_to_ns(value: str) -> int:
 def validate_csv_outputs(
     summary_path: Path,
     details_path: Path,
+    operator_list_path: Path,
     kernel_summary: dict[str, Any],
 ) -> dict[str, bool]:
     with summary_path.open(encoding="utf-8", newline="") as source:
         summary_rows = list(csv.DictReader(source))
     with details_path.open(encoding="utf-8", newline="") as source:
         details_rows = list(csv.DictReader(source))
+    with operator_list_path.open(encoding="utf-8", newline="") as source:
+        operator_rows = list(csv.DictReader(source))
 
     expected_keys = list(kernel_summary)
-    summary_keys = [row["kernel_name"] for row in summary_rows]
+    summary_keys = list(dict.fromkeys(row["kernel_name"] for row in summary_rows))
     details_keys = list(dict.fromkeys(row["kernel_name"] for row in details_rows))
     details_count: Counter[str] = Counter()
     details_ns: Counter[str] = Counter()
@@ -472,12 +520,11 @@ def validate_csv_outputs(
         details_count[row["kernel_name"]] += int(row["kernel_event_count"])
         details_ns[row["kernel_name"]] += csv_us_to_ns(row["kernel_time_us"])
 
-    summary_count = {
-        row["kernel_name"]: int(row["total_call_count"]) for row in summary_rows
-    }
-    summary_ns = {
-        row["kernel_name"]: csv_us_to_ns(row["total_time_us"]) for row in summary_rows
-    }
+    summary_count: Counter[str] = Counter()
+    summary_ns: Counter[str] = Counter()
+    for row in summary_rows:
+        summary_count[row["kernel_name"]] += int(row["kernel_call_count"])
+        summary_ns[row["kernel_name"]] += csv_us_to_ns(row["kernel_time_us"])
     expected_count = {
         name: values["total_call_count"] for name, values in kernel_summary.items()
     }
@@ -485,16 +532,54 @@ def validate_csv_outputs(
         name: csv_us_to_ns(str(values["total_time_us"]))
         for name, values in kernel_summary.items()
     }
+    summary_relations = [
+        (row["operator_name"], row["kernel_name"]) for row in summary_rows
+    ]
+    details_relations = {
+        (row["operator_name"], row["kernel_name"]) for row in details_rows
+    }
+    operator_relations = [
+        (row["operator_name"], row["kernel_name"]) for row in operator_rows
+    ]
+    operator_to_id: dict[str, str] = {}
+    id_to_operator: dict[str, str] = {}
+    operator_ids_stable = True
+    for row in operator_rows:
+        operator = row["operator_name"]
+        operator_id = row["operator_id"]
+        if operator == "null":
+            operator_ids_stable &= operator_id == "null"
+            continue
+        previous_id = operator_to_id.setdefault(operator, operator_id)
+        previous_operator = id_to_operator.setdefault(operator_id, operator)
+        operator_ids_stable &= (
+            previous_id == operator_id and previous_operator == operator
+        )
     return {
         "csv_kernel_key_sets_match": (
-            summary_keys == expected_keys and details_keys == expected_keys
+            set(summary_keys) == set(expected_keys)
+            and set(details_keys) == set(expected_keys)
         ),
         "csv_kernel_event_count_matches": (
-            summary_count == expected_count and dict(details_count) == expected_count
+            dict(summary_count) == expected_count
+            and dict(details_count) == expected_count
         ),
         "csv_kernel_time_matches": (
-            summary_ns == expected_ns and dict(details_ns) == expected_ns
+            dict(summary_ns) == expected_ns and dict(details_ns) == expected_ns
         ),
+        "csv_summary_relations_unique": (
+            len(summary_relations) == len(set(summary_relations))
+        ),
+        "csv_summary_detail_relations_match": (
+            set(summary_relations) == details_relations
+        ),
+        "csv_operator_list_relations_unique": (
+            len(operator_relations) == len(set(operator_relations))
+        ),
+        "csv_operator_list_relations_match": (
+            set(operator_relations) == set(summary_relations)
+        ),
+        "csv_operator_ids_stable": operator_ids_stable,
     }
 
 
@@ -527,23 +612,28 @@ def main() -> None:
 
     summary_path = args.output_dir / "kernel_summary.csv"
     details_path = args.output_dir / "kernel_details_report.csv"
+    operator_list_path = args.output_dir / "operator_list.csv"
+    summary_rows = summary_csv_rows(
+        kernel_report, round(summary["kernel_time_total_us"] * 1000)
+    )
     write_csv(
         summary_path,
         [
+            "operator_name",
             "kernel_name",
-            "total_call_count",
-            "total_time_us",
+            "kernel_call_count",
+            "kernel_time_us",
             "percent",
         ],
-        summary_csv_rows(kernel_summary),
+        summary_rows,
     )
     write_csv(
         details_path,
         [
+            "operator_name",
             "kernel_name",
             "variant_index",
             "mapping_status",
-            "operator_name",
             "input_shapes",
             "input_dtypes",
             "candidate_operators",
@@ -552,8 +642,15 @@ def main() -> None:
         ],
         details_csv_rows(kernel_report),
     )
+    write_csv(
+        operator_list_path,
+        ["operator_id", "operator_name", "kernel_name"],
+        operator_list_rows(summary_rows),
+    )
     summary["conservation"].update(
-        validate_csv_outputs(summary_path, details_path, kernel_summary)
+        validate_csv_outputs(
+            summary_path, details_path, operator_list_path, kernel_summary
+        )
     )
     failed_checks = [
         key
