@@ -53,6 +53,43 @@ Results:
 /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b/results/
 ```
 
+## Native vLLM baseline
+
+Set `VLLM_PLUGINS` to an explicit empty value to reuse the same launch scripts
+without loading vllm-plugin-FL. Use a separate run root so baseline artifacts do
+not replace plugin artifacts.
+
+DeepSeek server:
+
+```bash
+VLLM_PLUGINS="" \
+PROFILE_RUN_ROOT=/vllm-workspace/graph_operator_profile_baseline_runs \
+bash tools/graph_operator_profile/serve_deepseek_v4_flash.sh
+```
+
+Qwen server:
+
+```bash
+VLLM_PLUGINS="" \
+PROFILE_RUN_ROOT=/vllm-workspace/graph_operator_profile_baseline_runs \
+bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+```
+
+Run the matching request command in a second terminal:
+
+```bash
+PROFILE_RUN_ROOT=/vllm-workspace/graph_operator_profile_baseline_runs \
+bash tools/graph_operator_profile/profile_request.sh \
+  <deepseek_v4_flash|qwen3_6_35b_a3b> \
+  <request-config.json>
+```
+
+Baseline results:
+
+```text
+/vllm-workspace/graph_operator_profile_baseline_runs/<model>/results/
+```
+
 ## Output files
 
 `kernel_summary.csv` is the compact physical inventory. It has one row per

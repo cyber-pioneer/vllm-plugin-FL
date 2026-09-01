@@ -13,7 +13,7 @@ mkdir -p "$PROFILE_DIR"
 
 printf -v PROFILER_CONFIG '{"profiler":"torch","torch_profiler_dir":"%s","torch_profiler_record_shapes":true,"torch_profiler_with_stack":false,"torch_profiler_dump_cuda_time_total":false,"torch_profiler_with_memory":false,"ignore_frontend":true}' "$PROFILE_DIR"
 
-export VLLM_PLUGINS=fl
+export VLLM_PLUGINS=${VLLM_PLUGINS-fl}
 export VLLM_FL_ENABLE_GRAPH_CAPTURE_PROFILE=0
 unset VLLM_FL_GRAPH_CAPTURE_PROFILE_DIR
 export VLLM_USE_BREAKABLE_CUDAGRAPH=0
