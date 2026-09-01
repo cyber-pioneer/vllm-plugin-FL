@@ -147,6 +147,50 @@ the sum of rank-0 runtime kernel durations from the corresponding run.
 `cpu_operator_type_comparison.csv`. This verifies complete CPU operator name
 sets independently from the smaller kernel-attributed operator set.
 
+## Qwen 4096/512
+
+Graph mode:
+
+```bash
+PROFILE_RUN_SUFFIX=_graph_4096_512 \
+bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+
+PROFILE_RUN_SUFFIX=_graph_4096_512 \
+bash tools/graph_operator_profile/profile_request.sh \
+  qwen3_6_35b_a3b \
+  tools/graph_operator_profile/qwen3_6_35b_a3b_request_4096_512.json
+```
+
+Eager mode:
+
+```bash
+PROFILE_EXECUTION_MODE=eager \
+PROFILE_RUN_SUFFIX=_eager_4096_512 \
+bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+
+PROFILE_RUN_SUFFIX=_eager_4096_512 \
+bash tools/graph_operator_profile/profile_request.sh \
+  qwen3_6_35b_a3b \
+  tools/graph_operator_profile/qwen3_6_35b_a3b_request_4096_512.json
+```
+
+Results:
+
+```text
+/vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_graph_4096_512/results/
+/vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_eager_4096_512/results/
+```
+
+The generated comparisons are:
+
+```text
+/vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_graph_4096_1024_vs_4096_512/
+/vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_graph_4096_512_vs_4096_256/
+/vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_eager_4096_1024_vs_4096_512/
+/vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_eager_4096_512_vs_4096_256/
+/vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_4096_512_graph_vs_eager/
+```
+
 ## Native vLLM baseline
 
 Set `VLLM_PLUGINS` to an explicit empty value to reuse the same launch scripts
