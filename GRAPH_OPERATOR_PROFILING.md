@@ -78,6 +78,75 @@ Results:
 /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_eager/results/
 ```
 
+## Qwen 4096/256 comparison
+
+Use the same graph-mode server with a distinct run suffix:
+
+```bash
+PROFILE_RUN_SUFFIX=_graph_4096_256 \
+bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+```
+
+After the server is ready:
+
+```bash
+PROFILE_RUN_SUFFIX=_graph_4096_256 \
+bash tools/graph_operator_profile/profile_request.sh \
+  qwen3_6_35b_a3b \
+  tools/graph_operator_profile/qwen3_6_35b_a3b_request_4096_256.json
+```
+
+Repeat in eager mode:
+
+```bash
+PROFILE_EXECUTION_MODE=eager \
+PROFILE_RUN_SUFFIX=_eager_4096_256 \
+bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+```
+
+```bash
+PROFILE_RUN_SUFFIX=_eager_4096_256 \
+bash tools/graph_operator_profile/profile_request.sh \
+  qwen3_6_35b_a3b \
+  tools/graph_operator_profile/qwen3_6_35b_a3b_request_4096_256.json
+```
+
+Generate complete union comparisons after both runs:
+
+```bash
+python3 tools/graph_operator_profile/compare_kernel_profiles.py \
+  --scan-cpu-operators \
+  --left /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b \
+  --right /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_graph_4096_256 \
+  --left-label 4096_1024 \
+  --right-label 4096_256 \
+  --output-dir /vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_graph_4096_1024_vs_4096_256
+
+python3 tools/graph_operator_profile/compare_kernel_profiles.py \
+  --scan-cpu-operators \
+  --left /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_eager \
+  --right /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_eager_4096_256 \
+  --left-label 4096_1024 \
+  --right-label 4096_256 \
+  --output-dir /vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_eager_4096_1024_vs_4096_256
+
+python3 tools/graph_operator_profile/compare_kernel_profiles.py \
+  --scan-cpu-operators \
+  --left /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_graph_4096_256 \
+  --right /vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_eager_4096_256 \
+  --left-label graph_4096_256 \
+  --right-label eager_4096_256 \
+  --output-dir /vllm-workspace/graph_operator_profile_runs/comparisons/qwen3_4096_256_graph_vs_eager
+```
+
+Each comparison contains the complete kernel, operator, and shape/dtype union
+in CSV form. The Markdown summary reports type intersections, one-sided types,
+runtime totals, and the largest duration-share changes. Percentages always use
+the sum of rank-0 runtime kernel durations from the corresponding run.
+`--scan-cpu-operators` also streams the raw traces to generate
+`cpu_operator_type_comparison.csv`. This verifies complete CPU operator name
+sets independently from the smaller kernel-attributed operator set.
+
 ## Native vLLM baseline
 
 Set `VLLM_PLUGINS` to an explicit empty value to reuse the same launch scripts
