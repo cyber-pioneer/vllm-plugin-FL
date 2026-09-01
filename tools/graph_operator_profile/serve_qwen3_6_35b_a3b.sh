@@ -2,7 +2,8 @@
 set -euo pipefail
 
 RUN_ROOT=${PROFILE_RUN_ROOT:-/vllm-workspace/graph_operator_profile_runs}
-RUN_DIR="$RUN_ROOT/qwen3_6_35b_a3b"
+RUN_SUFFIX=${PROFILE_RUN_SUFFIX:-}
+RUN_DIR="$RUN_ROOT/qwen3_6_35b_a3b$RUN_SUFFIX"
 PROFILE_DIR="$RUN_DIR/profile"
 if [[ -d "$RUN_DIR" ]]; then
   archive="$RUN_ROOT/archive/qwen3_6_35b_a3b_$(date +%Y%m%d_%H%M%S)_$$"

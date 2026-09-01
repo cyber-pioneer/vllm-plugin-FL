@@ -9,7 +9,8 @@ fi
 MODEL_CASE=$1
 REQUEST_CONFIG=$2
 RUN_ROOT=${PROFILE_RUN_ROOT:-/vllm-workspace/graph_operator_profile_runs}
-RUN_DIR="$RUN_ROOT/$MODEL_CASE"
+RUN_SUFFIX=${PROFILE_RUN_SUFFIX:-}
+RUN_DIR="$RUN_ROOT/$MODEL_CASE$RUN_SUFFIX"
 PROFILE_DIR="$RUN_DIR/profile"
 TOOL_DIR=$(cd "$(dirname "$0")" && pwd)
 BASE_URL=${PROFILE_BASE_URL:-http://localhost:8000}

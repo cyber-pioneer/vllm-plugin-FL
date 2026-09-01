@@ -56,14 +56,14 @@ Results:
 ## Native vLLM baseline
 
 Set `VLLM_PLUGINS` to an explicit empty value to reuse the same launch scripts
-without loading vllm-plugin-FL. Use a separate run root so baseline artifacts do
-not replace plugin artifacts.
+without loading vllm-plugin-FL. Set `PROFILE_RUN_SUFFIX=_baseline` so baseline
+artifacts share the same run root without replacing plugin artifacts.
 
 DeepSeek server:
 
 ```bash
 VLLM_PLUGINS="" \
-PROFILE_RUN_ROOT=/vllm-workspace/graph_operator_profile_baseline_runs \
+PROFILE_RUN_SUFFIX=_baseline \
 bash tools/graph_operator_profile/serve_deepseek_v4_flash.sh
 ```
 
@@ -71,14 +71,14 @@ Qwen server:
 
 ```bash
 VLLM_PLUGINS="" \
-PROFILE_RUN_ROOT=/vllm-workspace/graph_operator_profile_baseline_runs \
+PROFILE_RUN_SUFFIX=_baseline \
 bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
 ```
 
 Run the matching request command in a second terminal:
 
 ```bash
-PROFILE_RUN_ROOT=/vllm-workspace/graph_operator_profile_baseline_runs \
+PROFILE_RUN_SUFFIX=_baseline \
 bash tools/graph_operator_profile/profile_request.sh \
   <deepseek_v4_flash|qwen3_6_35b_a3b> \
   <request-config.json>
@@ -87,7 +87,8 @@ bash tools/graph_operator_profile/profile_request.sh \
 Baseline results:
 
 ```text
-/vllm-workspace/graph_operator_profile_baseline_runs/<model>/results/
+/vllm-workspace/graph_operator_profile_runs/deepseek_v4_flash_baseline/results/
+/vllm-workspace/graph_operator_profile_runs/qwen3_6_35b_a3b_baseline/results/
 ```
 
 ## Output files
