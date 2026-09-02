@@ -294,12 +294,34 @@ duplication.
 
 - `operator_id`
 - `operator_name`
+- `operator_kind`
 - `kernel_name`
 
-Operator IDs are stable one-based integers assigned by sorted operator name.
-All kernels related to one operator use the same ID. An unattributed kernel is
-written as `null,null,<kernel_name>`. Each operator/kernel relation appears
-exactly once.
+Every row has a stable positive integer ID. All kernels related to one
+attributed operator use the same ID. Unattributed NVJet kernels use
+`operator_name=null`, `operator_kind=unattributed_nvjet`, and one shared ID
+for the complete `nvjet_tst_*` family. Every other unattributed kernel uses
+`operator_name=null`, `operator_kind=unattributed`, and a stable ID derived
+from its kernel name.
+
+`operator_kind` is one of:
+
+- `aten`: an ATen dispatcher operator
+- `custom`: a namespaced custom operator
+- `runtime_operator`: another attributed runtime operator
+- `triton_compiled`: an Inductor/Triton kernel without a confidently known
+  source function
+- `torch_compile`: a kernel mapped to a known `torch.compile` function
+- `unattributed_nvjet`: an unattributed member of the NVJet GEMM family
+- `unattributed`: another unattributed kernel
+
+The vocabulary-mask Triton kernels are mapped to
+`vllm.model_executor.layers.vocab_parallel_embedding.get_masked_input_and_mask`.
+This mapping is based on their generated Inductor source-node metadata. Other
+Triton kernels retain their trace names; the extractor does not guess a source
+function from a fused kernel name alone.
+
+Each normalized operator/kind/kernel relation appears exactly once.
 
 `kernel_details_report.csv` is the detailed aggregate. It has one row per
 kernel/operator/shape/dtype/mapping-status combination and the following
@@ -351,8 +373,12 @@ in `conservation` to be `true`. The checks prove:
 - trace, summary, report, and mapping-status kernel times are identical
 - every individual kernel preserves its count and time in all report variants
 - summary operator/kernel relations are unique and equal the details relations
-- operator-list relations are unique and equal the summary relations
-- one operator always maps to one stable ID
+- normalized operator-list relations are unique and match the expected
+  classification
+- every physical kernel name remains present in the operator list
+- every operator-list row has a positive integer ID
+- one classified operator always maps to one stable ID
+- all unattributed `nvjet_tst_*` kernels share one ID
 - re-reading all CSV files preserves every kernel, count, and duration
 
 Kernel time is stored internally as integer nanoseconds and emitted in

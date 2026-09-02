@@ -18,6 +18,20 @@ GPU_CATEGORIES = {"kernel", "gpu_memcpy", "gpu_memset"}
 MetadataKey = tuple[str, str | None, str | None, str]
 MappingKey = tuple[str, str | None, str, str, str | None]
 
+VOCAB_MASK_COMPILE_FUNCTION = (
+    "vllm.model_executor.layers.vocab_parallel_embedding.get_masked_input_and_mask"
+)
+VOCAB_MASK_TRITON_KERNELS = frozenset(
+    {
+        "triton_poi_fused___and_____or___add_bitwise_not_ge_lt_mul_sub_0",
+        "triton_poi_fused___and_____or___add_ge_lt_mul_sub_0",
+        "triton_poi_fused___and_____or___bitwise_not_ge_lt_1",
+        "triton_poi_fused_add_bitwise_and_bitwise_not_bitwise_or_ge_lt_mul_sub_0",
+        "triton_poi_fused_add_bitwise_and_bitwise_or_ge_lt_mul_sub_0",
+        "triton_poi_fused_bitwise_and_bitwise_not_bitwise_or_ge_lt_1",
+    }
+)
+
 
 def iter_events(path: Path) -> Iterable[dict[str, Any]]:
     opener = gzip.open if path.suffix == ".gz" else open
@@ -442,19 +456,81 @@ def summary_csv_rows(
     ]
 
 
-def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    operators = sorted(
-        {row["operator_name"] for row in summary_rows if row["operator_name"] != "null"}
+def operator_descriptor(
+    source_operator: str, kernel_name: str
+) -> tuple[str, str, tuple[str, ...]]:
+    if kernel_name in VOCAB_MASK_TRITON_KERNELS:
+        return (
+            VOCAB_MASK_COMPILE_FUNCTION,
+            "torch_compile",
+            ("torch_compile", VOCAB_MASK_COMPILE_FUNCTION),
+        )
+    if source_operator == "null":
+        if kernel_name.startswith("nvjet_tst_"):
+            return (
+                "null",
+                "unattributed_nvjet",
+                ("unattributed_nvjet",),
+            )
+        return (
+            "null",
+            "unattributed",
+            ("unattributed", kernel_name),
+        )
+    if source_operator.startswith("aten::"):
+        operator_kind = "aten"
+    elif source_operator.startswith("triton_"):
+        operator_kind = "triton_compiled"
+    elif "::" in source_operator:
+        operator_kind = "custom"
+    else:
+        operator_kind = "runtime_operator"
+    return (
+        source_operator,
+        operator_kind,
+        ("operator", operator_kind, source_operator),
     )
-    operator_ids = {operator: index for index, operator in enumerate(operators, 1)}
-    rows: list[dict[str, Any]] = []
+
+
+def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    relations: dict[tuple[str, str, str], tuple[str, ...]] = {}
     for summary_row in summary_rows:
-        operator = summary_row["operator_name"]
+        kernel_name = summary_row["kernel_name"]
+        operator_name, operator_kind, identity = operator_descriptor(
+            summary_row["operator_name"], kernel_name
+        )
+        relation = (operator_name, operator_kind, kernel_name)
+        previous = relations.setdefault(relation, identity)
+        if previous != identity:
+            raise RuntimeError(f"conflicting operator identities for {relation}")
+
+    identities = sorted(
+        set(relations.values()),
+        key=lambda identity: (
+            identity[0].startswith("unattributed"),
+            identity,
+        ),
+    )
+    operator_ids = {
+        identity: index for index, identity in enumerate(identities, start=1)
+    }
+    rows: list[dict[str, Any]] = []
+    for relation, identity in sorted(
+        relations.items(),
+        key=lambda item: (
+            operator_ids[item[1]],
+            item[0][2],
+            item[0][0],
+            item[0][1],
+        ),
+    ):
+        operator_name, operator_kind, kernel_name = relation
         rows.append(
             {
-                "operator_id": operator_ids.get(operator, "null"),
-                "operator_name": operator,
-                "kernel_name": summary_row["kernel_name"],
+                "operator_id": operator_ids[identity],
+                "operator_name": operator_name,
+                "operator_kind": operator_kind,
+                "kernel_name": kernel_name,
             }
         )
     return rows
@@ -539,22 +615,37 @@ def validate_csv_outputs(
         (row["operator_name"], row["kernel_name"]) for row in details_rows
     }
     operator_relations = [
-        (row["operator_name"], row["kernel_name"]) for row in operator_rows
+        (row["operator_name"], row["operator_kind"], row["kernel_name"])
+        for row in operator_rows
     ]
-    operator_to_id: dict[str, str] = {}
-    id_to_operator: dict[str, str] = {}
+    expected_operator_rows = operator_list_rows(summary_rows)
+    normalized_operator_rows = [
+        {**row, "operator_id": int(row["operator_id"])} for row in operator_rows
+    ]
+    identity_to_id: dict[tuple[str, ...], str] = {}
+    id_to_identity: dict[str, tuple[str, ...]] = {}
     operator_ids_stable = True
     for row in operator_rows:
-        operator = row["operator_name"]
+        operator_name = row["operator_name"]
+        operator_kind = row["operator_kind"]
+        kernel_name = row["kernel_name"]
         operator_id = row["operator_id"]
-        if operator == "null":
-            operator_ids_stable &= operator_id == "null"
-            continue
-        previous_id = operator_to_id.setdefault(operator, operator_id)
-        previous_operator = id_to_operator.setdefault(operator_id, operator)
+        if operator_kind == "unattributed_nvjet":
+            identity = ("unattributed_nvjet",)
+        elif operator_kind == "unattributed":
+            identity = ("unattributed", kernel_name)
+        elif operator_kind == "torch_compile":
+            identity = ("torch_compile", operator_name)
+        else:
+            identity = ("operator", operator_kind, operator_name)
+        previous_id = identity_to_id.setdefault(identity, operator_id)
+        previous_identity = id_to_identity.setdefault(operator_id, identity)
         operator_ids_stable &= (
-            previous_id == operator_id and previous_operator == operator
+            previous_id == operator_id and previous_identity == identity
         )
+    nvjet_rows = [
+        row for row in operator_rows if row["operator_kind"] == "unattributed_nvjet"
+    ]
     return {
         "csv_kernel_key_sets_match": (
             set(summary_keys) == set(expected_keys)
@@ -576,10 +667,22 @@ def validate_csv_outputs(
         "csv_operator_list_relations_unique": (
             len(operator_relations) == len(set(operator_relations))
         ),
-        "csv_operator_list_relations_match": (
-            set(operator_relations) == set(summary_relations)
+        "csv_operator_list_rows_match_expected": (
+            normalized_operator_rows == expected_operator_rows
+        ),
+        "csv_operator_list_kernel_sets_match": (
+            {row["kernel_name"] for row in operator_rows}
+            == {row["kernel_name"] for row in summary_rows}
+        ),
+        "csv_operator_ids_present": all(
+            re.fullmatch(r"[1-9]\d*", row["operator_id"]) is not None
+            for row in operator_rows
         ),
         "csv_operator_ids_stable": operator_ids_stable,
+        "csv_unattributed_nvjet_grouped": (
+            len({row["operator_id"] for row in nvjet_rows}) <= 1
+            and all(row["kernel_name"].startswith("nvjet_tst_") for row in nvjet_rows)
+        ),
     }
 
 
@@ -644,7 +747,7 @@ def main() -> None:
     )
     write_csv(
         operator_list_path,
-        ["operator_id", "operator_name", "kernel_name"],
+        ["operator_id", "operator_name", "operator_kind", "kernel_name"],
         operator_list_rows(summary_rows),
     )
     summary["conservation"].update(
