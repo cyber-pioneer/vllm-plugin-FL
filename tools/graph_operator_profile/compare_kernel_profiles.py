@@ -44,7 +44,7 @@ def load_run(run_dir, scan_cpu_operators):
     summary = read_json(result_dir / "summary.json")
     metrics = read_json(run_dir / "profiled_metrics.json")
     kernels = defaultdict(lambda: {"call_count": 0, "time_us": 0.0})
-    for row in read_csv(result_dir / "kernel_summary.csv"):
+    for row in read_csv(result_dir / "kernel_time.csv"):
         count_key = (
             "kernel_call_count" if "kernel_call_count" in row else "total_call_count"
         )
@@ -70,7 +70,7 @@ def load_run(run_dir, scan_cpu_operators):
             "time_us": 0.0,
         }
     )
-    for row in read_csv(result_dir / "kernel_details_report.csv"):
+    for row in read_csv(result_dir / "kernel_shape_dtype.csv"):
         operator_name = normalized_metadata(row["operator_name"])
         input_shapes = normalized_metadata(row["input_shapes"])
         input_dtypes = normalized_metadata(row["input_dtypes"])

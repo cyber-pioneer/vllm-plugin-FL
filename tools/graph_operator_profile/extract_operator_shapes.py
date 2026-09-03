@@ -650,14 +650,14 @@ def csv_us_to_ns(value: str) -> int:
 
 
 def validate_csv_outputs(
-    summary_path: Path,
-    details_path: Path,
+    kernel_time_path: Path,
+    kernel_shape_dtype_path: Path,
     operator_list_path: Path,
     kernel_summary: dict[str, Any],
 ) -> dict[str, bool]:
-    with summary_path.open(encoding="utf-8", newline="") as source:
+    with kernel_time_path.open(encoding="utf-8", newline="") as source:
         summary_rows = list(csv.DictReader(source))
-    with details_path.open(encoding="utf-8", newline="") as source:
+    with kernel_shape_dtype_path.open(encoding="utf-8", newline="") as source:
         details_rows = list(csv.DictReader(source))
     with operator_list_path.open(encoding="utf-8", newline="") as source:
         operator_rows = list(csv.DictReader(source))
@@ -845,14 +845,14 @@ def main() -> None:
     if failed_checks:
         raise RuntimeError(f"kernel conservation failed: {summary['conservation']}")
 
-    summary_path = args.output_dir / "kernel_summary.csv"
-    details_path = args.output_dir / "kernel_details_report.csv"
+    kernel_time_path = args.output_dir / "kernel_time.csv"
+    kernel_shape_dtype_path = args.output_dir / "kernel_shape_dtype.csv"
     operator_list_path = args.output_dir / "operator_list.csv"
     summary_rows = summary_csv_rows(
         kernel_report, round(summary["kernel_time_total_us"] * 1000)
     )
     write_csv(
-        summary_path,
+        kernel_time_path,
         [
             "operator_name",
             "kernel_name",
@@ -863,7 +863,7 @@ def main() -> None:
         summary_rows,
     )
     write_csv(
-        details_path,
+        kernel_shape_dtype_path,
         [
             "operator_name",
             "kernel_name",
@@ -884,7 +884,10 @@ def main() -> None:
     )
     summary["conservation"].update(
         validate_csv_outputs(
-            summary_path, details_path, operator_list_path, kernel_summary
+            kernel_time_path,
+            kernel_shape_dtype_path,
+            operator_list_path,
+            kernel_summary,
         )
     )
     failed_checks = [
@@ -899,6 +902,8 @@ def main() -> None:
         "kernel_summary.json",
         "kernel_report.json",
         "kernel_report.csv",
+        "kernel_summary.csv",
+        "kernel_details_report.csv",
         "non_kernel_gpu_activity.json",
         "operator_index.json",
     ):

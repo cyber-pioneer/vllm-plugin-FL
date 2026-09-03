@@ -270,7 +270,7 @@ Confirm this from both the server process environment and the absence of
 
 ## Output files
 
-`kernel_summary.csv` is the compact operator-to-kernel aggregate. It has one
+`kernel_time.csv` is the compact operator-to-kernel timing aggregate. It has one
 row per unique `(operator_name, kernel_name)` relation and the following
 columns:
 
@@ -342,7 +342,7 @@ multiplication, or quantization are `fused_communication_compute`, not
 `vllm::flashinfer_trtllm_fused_allreduce_norm` remains numbered because its
 kernel performs all-reduce, residual addition, and RMSNorm together.
 
-`kernel_details_report.csv` is the detailed aggregate. It has one row per
+`kernel_shape_dtype.csv` is the input-metadata aggregate. It has one row per
 kernel/operator/shape/dtype/mapping-status combination and the following
 columns:
 
@@ -356,7 +356,7 @@ columns:
 - `kernel_event_count`
 - `kernel_time_us`
 
-The summary and details report can contain multiple rows for one kernel.
+The timing and shape/dtype files can contain multiple rows for one kernel.
 Their distinct `kernel_name` sets equal the physical kernel set, and their
 per-kernel count and time totals are identical.
 
