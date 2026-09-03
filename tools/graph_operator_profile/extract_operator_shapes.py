@@ -17,6 +17,7 @@ from typing import Any
 GPU_CATEGORIES = {"kernel", "gpu_memcpy", "gpu_memset"}
 MetadataKey = tuple[str, str | None, str | None, str]
 MappingKey = tuple[str, str | None, str, str, str | None]
+OperatorIdentity = tuple[str, ...]
 
 VOCAB_MASK_COMPILE_FUNCTION = (
     "vllm.model_executor.layers.vocab_parallel_embedding.get_masked_input_and_mask"
@@ -31,6 +32,61 @@ VOCAB_MASK_TRITON_KERNELS = frozenset(
         "triton_poi_fused_bitwise_and_bitwise_not_bitwise_or_ge_lt_1",
     }
 )
+
+MOE_ALIGN_BLOCK_SIZE_KERNEL = re.compile(
+    r"^moe_align_block_size_stage\d+(?:_[A-Za-z0-9]+)*$"
+)
+MOE_ALIGN_BLOCK_SIZE_OPERATOR = "moe_align_block_size"
+
+PURE_COMMUNICATION_OPERATORS = frozenset(
+    {
+        "_C_custom_ar::all_reduce",
+        "symm_mem::one_shot_all_reduce",
+        "symm_mem::one_shot_all_reduce_",
+        "symm_mem::two_shot_all_reduce_",
+        "symm_mem::two_shot_all_reduce_out",
+        "symm_mem::multimem_all_reduce_",
+        "symm_mem::multimem_one_shot_all_reduce",
+    }
+)
+FUSED_COMMUNICATION_COMPUTE_OPERATORS = frozenset(
+    {
+        "vllm::flashinfer_trtllm_fused_allreduce_norm",
+    }
+)
+
+
+def is_fused_communication_compute(operator_name: str, kernel_name: str) -> bool:
+    if operator_name in FUSED_COMMUNICATION_COMPUTE_OPERATORS:
+        return True
+    lowered = kernel_name.lower()
+    return any(
+        token in lowered
+        for token in (
+            "allreduce_fusion_kernel",
+            "fused_all_gather_matmul",
+            "fused_all_gather_scaled_matmul",
+            "fused_matmul_reduce_scatter",
+            "fused_scaled_matmul_reduce_scatter",
+        )
+    )
+
+
+def is_pure_communication(operator_name: str, kernel_name: str) -> bool:
+    if operator_name in PURE_COMMUNICATION_OPERATORS:
+        return True
+    if kernel_name.startswith("ncclDevKernel_"):
+        return True
+    lowered = kernel_name.lower()
+    return any(
+        token in lowered
+        for token in (
+            "cross_device_reduce_",
+            "one_shot_all_reduce_kernel",
+            "two_shot_all_reduce_kernel",
+            "multimem_all_reduce_kernel",
+        )
+    )
 
 
 def iter_events(path: Path) -> Iterable[dict[str, Any]]:
@@ -458,7 +514,21 @@ def summary_csv_rows(
 
 def operator_descriptor(
     source_operator: str, kernel_name: str
-) -> tuple[str, str, tuple[str, ...]]:
+) -> tuple[str, str, OperatorIdentity | None]:
+    if MOE_ALIGN_BLOCK_SIZE_KERNEL.fullmatch(kernel_name):
+        return (
+            MOE_ALIGN_BLOCK_SIZE_OPERATOR,
+            "custom",
+            ("custom_group", MOE_ALIGN_BLOCK_SIZE_OPERATOR),
+        )
+    if is_fused_communication_compute(source_operator, kernel_name):
+        return (
+            source_operator,
+            "fused_communication_compute",
+            ("fused_communication_compute", kernel_name),
+        )
+    if is_pure_communication(source_operator, kernel_name):
+        return (source_operator, "communication", None)
     if kernel_name in VOCAB_MASK_TRITON_KERNELS:
         return (
             VOCAB_MASK_COMPILE_FUNCTION,
@@ -485,15 +555,16 @@ def operator_descriptor(
         operator_kind = "custom"
     else:
         operator_kind = "runtime_operator"
-    return (
-        source_operator,
-        operator_kind,
-        ("operator", operator_kind, source_operator),
+    identity = (
+        ("custom_kernel", source_operator, kernel_name)
+        if operator_kind == "custom"
+        else ("operator", operator_kind, source_operator)
     )
+    return (source_operator, operator_kind, identity)
 
 
 def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    relations: dict[tuple[str, str, str], tuple[str, ...]] = {}
+    relations: dict[tuple[str, str, str], OperatorIdentity | None] = {}
     for summary_row in summary_rows:
         kernel_name = summary_row["kernel_name"]
         operator_name, operator_kind, identity = operator_descriptor(
@@ -505,7 +576,7 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
             raise RuntimeError(f"conflicting operator identities for {relation}")
 
     identities = sorted(
-        set(relations.values()),
+        {identity for identity in relations.values() if identity is not None},
         key=lambda identity: (
             identity[0].startswith("unattributed"),
             identity,
@@ -518,16 +589,20 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
     for relation, identity in sorted(
         relations.items(),
         key=lambda item: (
-            operator_ids[item[1]],
-            item[0][2],
+            item[1] is None,
+            operator_ids[item[1]] if item[1] is not None else 0,
+            item[0][0] == "null",
             item[0][0],
+            item[0][2],
             item[0][1],
         ),
     ):
         operator_name, operator_kind, kernel_name = relation
         rows.append(
             {
-                "operator_id": operator_ids[identity],
+                "operator_id": (
+                    operator_ids[identity] if identity is not None else "null"
+                ),
                 "operator_name": operator_name,
                 "operator_kind": operator_kind,
                 "kernel_name": kernel_name,
@@ -620,24 +695,34 @@ def validate_csv_outputs(
     ]
     expected_operator_rows = operator_list_rows(summary_rows)
     normalized_operator_rows = [
-        {**row, "operator_id": int(row["operator_id"])} for row in operator_rows
+        {
+            **row,
+            "operator_id": (
+                row["operator_id"]
+                if row["operator_id"] == "null"
+                else int(row["operator_id"])
+            ),
+        }
+        for row in operator_rows
     ]
     identity_to_id: dict[tuple[str, ...], str] = {}
     id_to_identity: dict[str, tuple[str, ...]] = {}
     operator_ids_stable = True
+    operator_classification_matches = True
     for row in operator_rows:
         operator_name = row["operator_name"]
         operator_kind = row["operator_kind"]
         kernel_name = row["kernel_name"]
         operator_id = row["operator_id"]
-        if operator_kind == "unattributed_nvjet":
-            identity = ("unattributed_nvjet",)
-        elif operator_kind == "unattributed":
-            identity = ("unattributed", kernel_name)
-        elif operator_kind == "torch_compile":
-            identity = ("torch_compile", operator_name)
-        else:
-            identity = ("operator", operator_kind, operator_name)
+        expected_name, expected_kind, identity = operator_descriptor(
+            operator_name, kernel_name
+        )
+        operator_classification_matches &= (
+            expected_name == operator_name and expected_kind == operator_kind
+        )
+        if identity is None:
+            operator_ids_stable &= operator_id == "null"
+            continue
         previous_id = identity_to_id.setdefault(identity, operator_id)
         previous_identity = id_to_identity.setdefault(operator_id, identity)
         operator_ids_stable &= (
@@ -645,6 +730,35 @@ def validate_csv_outputs(
         )
     nvjet_rows = [
         row for row in operator_rows if row["operator_kind"] == "unattributed_nvjet"
+    ]
+    communication_rows = [
+        row for row in operator_rows if row["operator_kind"] == "communication"
+    ]
+    seen_communication = False
+    communication_rows_last = True
+    for row in operator_rows:
+        is_communication = row["operator_kind"] == "communication"
+        seen_communication |= is_communication
+        if seen_communication and not is_communication:
+            communication_rows_last = False
+
+    custom_ids_by_operator: dict[str, dict[str, str]] = defaultdict(dict)
+    for row in operator_rows:
+        if (
+            row["operator_kind"] == "custom"
+            and row["operator_name"] != MOE_ALIGN_BLOCK_SIZE_OPERATOR
+        ):
+            custom_ids_by_operator[row["operator_name"]][row["kernel_name"]] = row[
+                "operator_id"
+            ]
+    custom_kernel_ids_distinct = all(
+        len(kernel_ids.values()) == len(set(kernel_ids.values()))
+        for kernel_ids in custom_ids_by_operator.values()
+    )
+    moe_align_rows = [
+        row
+        for row in operator_rows
+        if MOE_ALIGN_BLOCK_SIZE_KERNEL.fullmatch(row["kernel_name"])
     ]
     return {
         "csv_kernel_key_sets_match": (
@@ -675,10 +789,28 @@ def validate_csv_outputs(
             == {row["kernel_name"] for row in summary_rows}
         ),
         "csv_operator_ids_present": all(
-            re.fullmatch(r"[1-9]\d*", row["operator_id"]) is not None
+            (
+                row["operator_id"] == "null"
+                if row["operator_kind"] == "communication"
+                else re.fullmatch(r"[1-9]\d*", row["operator_id"]) is not None
+            )
             for row in operator_rows
         ),
         "csv_operator_ids_stable": operator_ids_stable,
+        "csv_operator_classification_matches": operator_classification_matches,
+        "csv_communication_rows_unnumbered": all(
+            row["operator_id"] == "null" for row in communication_rows
+        ),
+        "csv_communication_rows_last": communication_rows_last,
+        "csv_custom_kernel_ids_distinct": custom_kernel_ids_distinct,
+        "csv_moe_align_block_size_grouped": (
+            len({row["operator_id"] for row in moe_align_rows}) <= 1
+            and all(
+                row["operator_name"] == MOE_ALIGN_BLOCK_SIZE_OPERATOR
+                and row["operator_kind"] == "custom"
+                for row in moe_align_rows
+            )
+        ),
         "csv_unattributed_nvjet_grouped": (
             len({row["operator_id"] for row in nvjet_rows}) <= 1
             and all(row["kernel_name"].startswith("nvjet_tst_") for row in nvjet_rows)

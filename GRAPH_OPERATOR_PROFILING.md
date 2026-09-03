@@ -297,17 +297,27 @@ duplication.
 - `operator_kind`
 - `kernel_name`
 
-Every row has a stable positive integer ID. All kernels related to one
-attributed operator use the same ID. Unattributed NVJet kernels use
-`operator_name=null`, `operator_kind=unattributed_nvjet`, and one shared ID
-for the complete `nvjet_tst_*` family. Every other unattributed kernel uses
+Every non-communication row has a stable positive integer ID. Pure
+communication rows use `operator_id=null`, are excluded from operator
+numbering, and are placed at the end of the file. Unattributed NVJet kernels
+use `operator_name=null`, `operator_kind=unattributed_nvjet`, and one shared
+ID for the complete `nvjet_tst_*` family. Every other unattributed kernel uses
 `operator_name=null`, `operator_kind=unattributed`, and a stable ID derived
 from its kernel name.
+
+Namespaced `custom` operators are numbered at kernel granularity. Different
+kernel names therefore receive different IDs even when the runtime operator
+name is the same. The `moe_align_block_size_stage*` kernel family is the one
+explicit exception: all stages are normalized to `moe_align_block_size` and
+share one ID.
 
 `operator_kind` is one of:
 
 - `aten`: an ATen dispatcher operator
 - `custom`: a namespaced custom operator
+- `communication`: a pure cross-rank collective; these rows are unnumbered
+- `fused_communication_compute`: a kernel that combines communication with
+  model computation and remains part of normal operator numbering
 - `runtime_operator`: another attributed runtime operator
 - `triton_compiled`: an Inductor/Triton kernel without a confidently known
   source function
@@ -322,6 +332,15 @@ Triton kernels retain their trace names; the extractor does not guess a source
 function from a fused kernel name alone.
 
 Each normalized operator/kind/kernel relation appears exactly once.
+
+Communication classification uses deterministic operator and kernel rules;
+it does not use model-based semantic analysis. NCCL kernels, vLLM custom
+all-reduce kernels, and PyTorch symmetric-memory all-reduce kernels are pure
+communication. Kernels that fuse a collective with RMSNorm, matrix
+multiplication, or quantization are `fused_communication_compute`, not
+`communication`. In particular,
+`vllm::flashinfer_trtllm_fused_allreduce_norm` remains numbered because its
+kernel performs all-reduce, residual addition, and RMSNorm together.
 
 `kernel_details_report.csv` is the detailed aggregate. It has one row per
 kernel/operator/shape/dtype/mapping-status combination and the following
@@ -376,8 +395,11 @@ in `conservation` to be `true`. The checks prove:
 - normalized operator-list relations are unique and match the expected
   classification
 - every physical kernel name remains present in the operator list
-- every operator-list row has a positive integer ID
-- one classified operator always maps to one stable ID
+- every non-communication operator-list row has a positive integer ID
+- pure communication rows use `operator_id=null` and appear last
+- custom operators use distinct IDs for distinct kernels
+- all `moe_align_block_size_stage*` kernels share one ID
+- one classified non-communication operator identity always maps to one ID
 - all unattributed `nvjet_tst_*` kernels share one ID
 - re-reading all CSV files preserves every kernel, count, and duration
 
@@ -386,16 +408,10 @@ microseconds. This avoids floating-point drift in aggregate conservation.
 
 ## Collection boundary
 
-The server scripts explicitly disable graph-construction profiling:
-
-```bash
-export VLLM_FL_ENABLE_GRAPH_CAPTURE_PROFILE=0
-unset VLLM_FL_GRAPH_CAPTURE_PROFILE_DIR
-```
-
-`VLLM_FL_ENABLE_GRAPH_CAPTURE_PROFILE` defaults to disabled. The upstream
-`/start_profile` and `/stop_profile` behavior remains unchanged and writes one
-raw runtime trace per rank. The extractor selects rank 0:
+Graph construction is not profiled or included. The plugin does not modify
+the model runner's CUDA Graph capture path. The upstream `/start_profile` and
+`/stop_profile` behavior writes one raw runtime trace per rank, and the
+extractor selects rank 0:
 
 ```bash
 python3 tools/graph_operator_profile/extract_operator_shapes.py \

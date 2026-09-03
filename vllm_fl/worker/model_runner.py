@@ -7,7 +7,6 @@
 import functools
 import gc
 import itertools
-import os
 import threading
 import time
 from collections import defaultdict
@@ -290,72 +289,6 @@ if TYPE_CHECKING:
     from vllm.v1.worker.encoder_cudagraph import EncoderCudaGraphManager
 
 logger = init_logger(__name__)
-
-
-def _graph_capture_profile_enabled() -> bool:
-    value = os.environ.get("VLLM_FL_ENABLE_GRAPH_CAPTURE_PROFILE", "")
-    value = value.strip().lower()
-    if value in {"", "0", "false", "off", "no"}:
-        return False
-    if value in {"1", "true", "on", "yes"}:
-        return True
-    raise ValueError(
-        "VLLM_FL_ENABLE_GRAPH_CAPTURE_PROFILE must be a boolean value"
-    )
-
-
-@contextmanager
-def _profile_graph_capture(
-    num_tokens: int,
-    cudagraph_runtime_mode: CUDAGraphMode,
-):
-    """Record real CUDA Graph capture on the current rank.
-
-    Runtime profiling remains owned by upstream vLLM's /start_profile and is
-    intentionally unchanged. This hook captures graph-construction operators
-    with shape/dtype metadata without a sitecustomize monkey patch.
-    """
-    if not _graph_capture_profile_enabled():
-        yield
-        return
-    trace_root = os.environ.get("VLLM_FL_GRAPH_CAPTURE_PROFILE_DIR", "")
-    if not trace_root:
-        raise ValueError(
-            "VLLM_FL_GRAPH_CAPTURE_PROFILE_DIR is required when "
-            "VLLM_FL_ENABLE_GRAPH_CAPTURE_PROFILE is enabled"
-        )
-
-    os.makedirs(trace_root, exist_ok=True)
-    rank = (
-        torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
-    )
-    mode_name = cudagraph_runtime_mode.name
-    label = f"capture_{num_tokens}_{mode_name}"
-    handler = torch.profiler.tensorboard_trace_handler(
-        trace_root,
-        worker_name=f"graph_capture_rank_{rank}_{label}",
-        use_gzip=True,
-    )
-    logger.info(
-        "Profiling real CUDA Graph capture on rank %d: tokens=%d mode=%s",
-        rank,
-        num_tokens,
-        mode_name,
-    )
-    with (
-        torch.profiler.profile(
-            activities=[
-                torch.profiler.ProfilerActivity.CPU,
-                torch.profiler.ProfilerActivity.CUDA,
-            ],
-            record_shapes=True,
-            profile_memory=False,
-            with_stack=False,
-            on_trace_ready=handler,
-        ),
-        torch.profiler.record_function(label),
-    ):
-        yield
 
 
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
@@ -6830,34 +6763,17 @@ class ModelRunnerFL(
                 num_active_loras=desc.num_active_loras,
                 profile_seq_lens=profile_seq_lens,
             )
-        if _graph_capture_profile_enabled():
-            with _profile_graph_capture(
-                desc.num_tokens,
-                cudagraph_runtime_mode,
-            ):
-                self._dummy_run(
-                    desc.num_tokens,
-                    cudagraph_runtime_mode=cudagraph_runtime_mode,
-                    uniform_decode=desc.uniform,
-                    allow_microbatching=allow_microbatching,
-                    skip_eplb=True,
-                    remove_lora=False,
-                    num_active_loras=desc.num_active_loras,
-                    is_graph_capturing=True,
-                    profile_seq_lens=profile_seq_lens,
-                )
-        else:
-            self._dummy_run(
-                desc.num_tokens,
-                cudagraph_runtime_mode=cudagraph_runtime_mode,
-                uniform_decode=desc.uniform,
-                allow_microbatching=allow_microbatching,
-                skip_eplb=True,
-                remove_lora=False,
-                num_active_loras=desc.num_active_loras,
-                is_graph_capturing=True,
-                profile_seq_lens=profile_seq_lens,
-            )
+        self._dummy_run(
+            desc.num_tokens,
+            cudagraph_runtime_mode=cudagraph_runtime_mode,
+            uniform_decode=desc.uniform,
+            allow_microbatching=allow_microbatching,
+            skip_eplb=True,
+            remove_lora=False,
+            num_active_loras=desc.num_active_loras,
+            is_graph_capturing=True,
+            profile_seq_lens=profile_seq_lens,
+        )
 
     def _capture_cudagraphs(
         self,
