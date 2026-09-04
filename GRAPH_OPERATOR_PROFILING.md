@@ -305,11 +305,16 @@ ID for the complete `nvjet_tst_*` family. Every other unattributed kernel uses
 `operator_name=null`, `operator_kind=unattributed`, and a stable ID derived
 from its kernel name.
 
-Namespaced `custom` operators are numbered at kernel granularity. Different
-kernel names therefore receive different IDs even when the runtime operator
-name is the same. The `moe_align_block_size_stage*` kernel family is the one
-explicit exception: all stages are normalized to `moe_align_block_size` and
-share one ID.
+Namespaced `custom` operators are numbered by their demangled kernel identity.
+The outer function parameter list, template arguments, and a leading `void`
+return type do not participate in the identity. Namespace and callable names
+remain significant. The source runtime operator label also does not participate
+in the ID. Full source operator labels and kernel names remain unchanged in
+every CSV.
+Consequently, parameter and template-specialization variants of one callable
+share an ID. The `moe_align_block_size_stage*` kernel family remains an
+explicit group: all stages are normalized to `moe_align_block_size` and share
+one ID.
 
 `operator_kind` is one of:
 
@@ -397,7 +402,8 @@ in `conservation` to be `true`. The checks prove:
 - every physical kernel name remains present in the operator list
 - every non-communication operator-list row has a positive integer ID
 - pure communication rows use `operator_id=null` and appear last
-- custom operators use distinct IDs for distinct kernels
+- custom parameter-signature variants share one ID while different normalized
+  kernel identities remain distinct
 - all `moe_align_block_size_stage*` kernels share one ID
 - one classified non-communication operator identity always maps to one ID
 - all unattributed `nvjet_tst_*` kernels share one ID

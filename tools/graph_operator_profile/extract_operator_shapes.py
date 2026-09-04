@@ -89,6 +89,35 @@ def is_pure_communication(operator_name: str, kernel_name: str) -> bool:
     )
 
 
+def custom_kernel_identity_name(kernel_name: str) -> str:
+    """Return a demangled kernel's namespace-qualified callable name."""
+    name = kernel_name.strip()
+    if name.startswith("void "):
+        name = name[5:].lstrip()
+    if name.endswith(")"):
+        depth = 0
+        for index in range(len(name) - 1, -1, -1):
+            character = name[index]
+            if character == ")":
+                depth += 1
+            elif character == "(":
+                depth -= 1
+                if depth == 0:
+                    name = name[:index].rstrip()
+                    break
+
+    normalized: list[str] = []
+    template_depth = 0
+    for character in name:
+        if character == "<":
+            template_depth += 1
+        elif character == ">" and template_depth:
+            template_depth -= 1
+        elif template_depth == 0:
+            normalized.append(character)
+    return "".join(normalized) if template_depth == 0 else name
+
+
 def iter_events(path: Path) -> Iterable[dict[str, Any]]:
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as source:
@@ -556,7 +585,10 @@ def operator_descriptor(
     else:
         operator_kind = "runtime_operator"
     identity = (
-        ("custom_kernel", source_operator, kernel_name)
+        (
+            "custom_kernel",
+            custom_kernel_identity_name(kernel_name),
+        )
         if operator_kind == "custom"
         else ("operator", operator_kind, source_operator)
     )
@@ -742,18 +774,16 @@ def validate_csv_outputs(
         if seen_communication and not is_communication:
             communication_rows_last = False
 
-    custom_ids_by_operator: dict[str, dict[str, str]] = defaultdict(dict)
+    custom_ids_by_identity: dict[str, set[str]] = defaultdict(set)
     for row in operator_rows:
         if (
             row["operator_kind"] == "custom"
             and row["operator_name"] != MOE_ALIGN_BLOCK_SIZE_OPERATOR
         ):
-            custom_ids_by_operator[row["operator_name"]][row["kernel_name"]] = row[
-                "operator_id"
-            ]
-    custom_kernel_ids_distinct = all(
-        len(kernel_ids.values()) == len(set(kernel_ids.values()))
-        for kernel_ids in custom_ids_by_operator.values()
+            identity = custom_kernel_identity_name(row["kernel_name"])
+            custom_ids_by_identity[identity].add(row["operator_id"])
+    custom_parameter_variants_grouped = all(
+        len(operator_ids) == 1 for operator_ids in custom_ids_by_identity.values()
     )
     moe_align_rows = [
         row
@@ -802,7 +832,7 @@ def validate_csv_outputs(
             row["operator_id"] == "null" for row in communication_rows
         ),
         "csv_communication_rows_last": communication_rows_last,
-        "csv_custom_kernel_ids_distinct": custom_kernel_ids_distinct,
+        "csv_custom_parameter_variants_grouped": (custom_parameter_variants_grouped),
         "csv_moe_align_block_size_grouped": (
             len({row["operator_id"] for row in moe_align_rows}) <= 1
             and all(
