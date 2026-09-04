@@ -299,7 +299,9 @@ duplication.
 
 Every non-communication row has a stable positive integer ID. Pure
 communication rows use `operator_id=null`, are excluded from operator
-numbering, and are placed at the end of the file. Unattributed NVJet kernels
+numbering, and are placed at the end of the file. ATen operators are assigned
+the first numbered IDs and their rows are placed before every other operator
+kind. Unattributed NVJet kernels
 use `operator_name=null`, `operator_kind=unattributed_nvjet`, and one shared
 ID for the complete `nvjet_tst_*` family. Every other unattributed kernel uses
 `operator_name=null`, `operator_kind=unattributed`, and a stable ID derived

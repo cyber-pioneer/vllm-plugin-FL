@@ -610,6 +610,7 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
     identities = sorted(
         {identity for identity in relations.values() if identity is not None},
         key=lambda identity: (
+            identity[:2] != ("operator", "aten"),
             identity[0].startswith("unattributed"),
             identity,
         ),
@@ -768,8 +769,14 @@ def validate_csv_outputs(
     ]
     seen_communication = False
     communication_rows_last = True
+    seen_non_aten = False
+    aten_rows_first = True
     for row in operator_rows:
         is_communication = row["operator_kind"] == "communication"
+        is_aten = row["operator_kind"] == "aten"
+        if seen_non_aten and is_aten:
+            aten_rows_first = False
+        seen_non_aten |= not is_aten
         seen_communication |= is_communication
         if seen_communication and not is_communication:
             communication_rows_last = False
@@ -828,6 +835,7 @@ def validate_csv_outputs(
         ),
         "csv_operator_ids_stable": operator_ids_stable,
         "csv_operator_classification_matches": operator_classification_matches,
+        "csv_aten_rows_first": aten_rows_first,
         "csv_communication_rows_unnumbered": all(
             row["operator_id"] == "null" for row in communication_rows
         ),
