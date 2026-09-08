@@ -3,6 +3,19 @@ set -euo pipefail
 
 RUN_ROOT=${PROFILE_RUN_ROOT:-/vllm-workspace/graph_operator_profile_runs}
 RUN_SUFFIX=${PROFILE_RUN_SUFFIX:-}
+EXECUTION_MODE=${PROFILE_EXECUTION_MODE:-graph}
+case "$EXECUTION_MODE" in
+  graph)
+    EXECUTION_ARGS=()
+    ;;
+  eager)
+    EXECUTION_ARGS=(--enforce-eager)
+    ;;
+  *)
+    echo "Unsupported PROFILE_EXECUTION_MODE: $EXECUTION_MODE" >&2
+    exit 2
+    ;;
+esac
 RUN_DIR="$RUN_ROOT/deepseek_v4_flash$RUN_SUFFIX"
 PROFILE_DIR="$RUN_DIR/profile"
 if [[ -d "$RUN_DIR" ]]; then
@@ -30,6 +43,7 @@ exec vllm serve /models/DeepSeek-V4-Flash \
   --no-async-scheduling \
   --no-enable-prefix-caching \
   --trust-remote-code \
+  "${EXECUTION_ARGS[@]}" \
   --compilation-config '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64],"cudagraph_num_of_warmups":0}' \
   --profiler-config "$PROFILER_CONFIG" \
   > "$RUN_DIR/serve.log" 2>&1
