@@ -89,7 +89,7 @@ def is_pure_communication(operator_name: str, kernel_name: str) -> bool:
     )
 
 
-def custom_kernel_identity_name(kernel_name: str) -> str:
+def kernel_callable_identity_name(kernel_name: str) -> str:
     """Return a demangled kernel's namespace-qualified callable name."""
     name = kernel_name.strip()
     if name.startswith("void "):
@@ -574,7 +574,7 @@ def operator_descriptor(
         return (
             "null",
             "unattributed",
-            ("unattributed", kernel_name),
+            ("kernel_callable", kernel_callable_identity_name(kernel_name)),
         )
     if source_operator.startswith("aten::"):
         operator_kind = "aten"
@@ -585,12 +585,9 @@ def operator_descriptor(
     else:
         operator_kind = "runtime_operator"
     identity = (
-        (
-            "custom_kernel",
-            custom_kernel_identity_name(kernel_name),
-        )
-        if operator_kind == "custom"
-        else ("operator", operator_kind, source_operator)
+        ("operator", operator_kind, source_operator)
+        if operator_kind in {"aten", "runtime_operator"}
+        else ("kernel_callable", kernel_callable_identity_name(kernel_name))
     )
     return (source_operator, operator_kind, identity)
 
@@ -787,10 +784,22 @@ def validate_csv_outputs(
             row["operator_kind"] == "custom"
             and row["operator_name"] != MOE_ALIGN_BLOCK_SIZE_OPERATOR
         ):
-            identity = custom_kernel_identity_name(row["kernel_name"])
+            identity = kernel_callable_identity_name(row["kernel_name"])
             custom_ids_by_identity[identity].add(row["operator_id"])
     custom_parameter_variants_grouped = all(
         len(operator_ids) == 1 for operator_ids in custom_ids_by_identity.values()
+    )
+    kernel_ids_by_callable: dict[str, set[str]] = defaultdict(set)
+    for row in operator_rows:
+        if row["operator_kind"] in {
+            "custom",
+            "triton_compiled",
+            "unattributed",
+        }:
+            identity = kernel_callable_identity_name(row["kernel_name"])
+            kernel_ids_by_callable[identity].add(row["operator_id"])
+    kernel_specializations_grouped = all(
+        len(operator_ids) == 1 for operator_ids in kernel_ids_by_callable.values()
     )
     moe_align_rows = [
         row
@@ -841,6 +850,7 @@ def validate_csv_outputs(
         ),
         "csv_communication_rows_last": communication_rows_last,
         "csv_custom_parameter_variants_grouped": (custom_parameter_variants_grouped),
+        "csv_kernel_specializations_grouped": kernel_specializations_grouped,
         "csv_moe_align_block_size_grouped": (
             len({row["operator_id"] for row in moe_align_rows}) <= 1
             and all(
