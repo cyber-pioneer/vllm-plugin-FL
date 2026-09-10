@@ -10,10 +10,18 @@ profiled. Reports are generated from the rank-0 runtime trace.
 
 ## Models
 
-| Model | Run name | Server script | Request config | TP |
-|---|---|---|---|---:|
-| Qwen3.6-35B-A3B | `qwen3_6_35b_a3b` | `serve_qwen3_6_35b_a3b.sh` | `qwen3_6_35b_a3b_request_4096_256.json` | 2 |
-| DeepSeek-V4-Flash | `deepseek_v4_flash` | `serve_deepseek_v4_flash.sh` | `deepseek_v4_flash_request_4096_256.json` | 8 |
+Model selection is data-driven. `models.json` contains the model path, served
+name, tensor-parallel size, and model-specific vLLM arguments. Adding a model
+requires one new object in that file; no model-specific script or request file
+is needed.
+
+| Model | Model key | TP |
+|---|---|---:|
+| Qwen3.6-35B-A3B | `qwen3_6_35b_a3b` | 2 |
+| DeepSeek-V4-Flash | `deepseek_v4_flash` | 8 |
+
+`workload_4096_256.json` defines the shared 64-concurrency, 4096-input-token,
+256-output-token workload independently of model selection.
 
 Run commands from `/vllm-workspace/vllm-plugin-FL`.
 
@@ -34,30 +42,28 @@ Terminal A:
 ```bash
 <server-environment> \
 PROFILE_RUN_SUFFIX=<suffix> \
-bash tools/graph_operator_profile/<server-script>
+python3 tools/graph_operator_profile/serve.py <model-key>
 ```
 
-Terminal B, after `/health` is ready:
+Terminal B can start immediately. The request command waits for `/health`:
 
 ```bash
 PROFILE_RUN_SUFFIX=<suffix> \
 bash tools/graph_operator_profile/profile_request.sh \
-  <run-name> \
-  tools/graph_operator_profile/<request-config>
+  <model-key>
 ```
 
 Example: Qwen plugin graph:
 
 ```bash
 PROFILE_RUN_SUFFIX=_plugin_graph_4096_256 \
-bash tools/graph_operator_profile/serve_qwen3_6_35b_a3b.sh
+python3 tools/graph_operator_profile/serve.py qwen3_6_35b_a3b
 ```
 
 ```bash
 PROFILE_RUN_SUFFIX=_plugin_graph_4096_256 \
 bash tools/graph_operator_profile/profile_request.sh \
-  qwen3_6_35b_a3b \
-  tools/graph_operator_profile/qwen3_6_35b_a3b_request_4096_256.json
+  qwen3_6_35b_a3b
 ```
 
 Results are written to:

@@ -105,6 +105,7 @@ def validate_usage(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, type=Path)
+    parser.add_argument("--model", required=True)
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument("--prompt-output", type=Path)
     parser.add_argument("--prompt-input", type=Path)
@@ -114,7 +115,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config = json.loads(args.config.read_text(encoding="utf-8"))
-    model = str(config["model"])
+    model = args.model
     concurrency = int(config["concurrency"])
     input_tokens = int(config["input_tokens"])
     output_tokens = int(config["output_tokens"])
