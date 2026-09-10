@@ -248,8 +248,8 @@ def main():
         [
             "",
             "Counts are unique operator-kernel relations from `operator_list.csv`, not runtime ",
-            "call counts. ATen relations are listed first. Pure communication relations remain ",
-            "unnumbered and last. Missing attribution remains present as `operator_name=null`.",
+            "call counts. ATen relations are listed first. Pure communication relations are ",
+            "numbered and listed last. Missing attribution remains present as `operator_name=null`.",
             "",
             "## Type and shape differences",
             "",

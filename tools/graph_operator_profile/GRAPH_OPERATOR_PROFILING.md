@@ -104,20 +104,23 @@ python3 tools/graph_operator_profile/generate_four_scenario_report.py \
 - `operator_kind`
 - `kernel_name`
 
-Every non-communication row has a positive integer ID. ATen operators are
-numbered first. Pure communication rows use `operator_id=null`, are excluded
-from numbering, and appear last. Unattributed kernels are retained with
-`operator_name=null`; all `nvjet_tst_*` kernels share one operator ID.
+Every row has a positive integer ID. ATen operators are numbered first. Pure
+communication kernels remain in the inventory, receive IDs by normalized
+demangled kernel callable, and appear last. Attributed and unattributed rows
+for the same communication kernel therefore share an ID. Unattributed kernels
+are retained with `operator_name=null`; all `nvjet_tst_*` kernels share one
+operator ID.
 
-Custom, Triton-compiled, and unattributed kernels are numbered by normalized
-demangled callable identity. Function arguments, template arguments, and a
-leading `void` return type do not affect the ID. Different specializations of
-one callable therefore share an ID. Attributed and unattributed replay rows
-also share an ID when their normalized callable is identical; their operator
-names and kinds remain unchanged. ATen and runtime-operator rows remain
-numbered by logical operator name so generic launchers do not split or merge
-unrelated operations. All `moe_align_block_size_stage*` kernels are normalized
-to `moe_align_block_size` and share one ID.
+Custom and unattributed kernels are numbered by normalized demangled callable
+identity. Function arguments, template arguments, and a leading `void` return
+type do not affect those IDs, so different specializations of one callable
+share an ID. Each distinct `torch_compile` or `triton_compiled` kernel name
+receives a separate ID, even when multiple kernels map to the same API or
+compile function. Repeated rows with the same compile kernel name share the
+same ID. ATen and runtime-operator rows remain numbered by logical operator
+name so generic launchers do not split or merge unrelated operations. All
+`moe_align_block_size_stage*` kernels are normalized to
+`moe_align_block_size` and share one ID.
 
 `operator_kind` is one of:
 

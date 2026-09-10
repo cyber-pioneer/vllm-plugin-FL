@@ -557,12 +557,16 @@ def operator_descriptor(
             ("fused_communication_compute", kernel_name),
         )
     if is_pure_communication(source_operator, kernel_name):
-        return (source_operator, "communication", None)
+        return (
+            source_operator,
+            "communication",
+            ("communication_kernel", kernel_callable_identity_name(kernel_name)),
+        )
     if kernel_name in VOCAB_MASK_TRITON_KERNELS:
         return (
             VOCAB_MASK_COMPILE_FUNCTION,
             "torch_compile",
-            ("torch_compile", VOCAB_MASK_COMPILE_FUNCTION),
+            ("compile_kernel", kernel_name),
         )
     if source_operator == "null":
         if kernel_name.startswith("nvjet_tst_"):
@@ -584,11 +588,12 @@ def operator_descriptor(
         operator_kind = "custom"
     else:
         operator_kind = "runtime_operator"
-    identity = (
-        ("operator", operator_kind, source_operator)
-        if operator_kind in {"aten", "runtime_operator"}
-        else ("kernel_callable", kernel_callable_identity_name(kernel_name))
-    )
+    if operator_kind in {"aten", "runtime_operator"}:
+        identity = ("operator", operator_kind, source_operator)
+    elif operator_kind == "triton_compiled":
+        identity = ("compile_kernel", kernel_name)
+    else:
+        identity = ("kernel_callable", kernel_callable_identity_name(kernel_name))
     return (source_operator, operator_kind, identity)
 
 
@@ -608,6 +613,7 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
         {identity for identity in relations.values() if identity is not None},
         key=lambda identity: (
             identity[:2] != ("operator", "aten"),
+            identity[0] == "communication_kernel",
             identity[0].startswith("unattributed"),
             identity,
         ),
@@ -793,7 +799,6 @@ def validate_csv_outputs(
     for row in operator_rows:
         if row["operator_kind"] in {
             "custom",
-            "triton_compiled",
             "unattributed",
         }:
             identity = kernel_callable_identity_name(row["kernel_name"])
@@ -801,6 +806,17 @@ def validate_csv_outputs(
     kernel_specializations_grouped = all(
         len(operator_ids) == 1 for operator_ids in kernel_ids_by_callable.values()
     )
+    compile_kernels_by_id: dict[str, set[str]] = defaultdict(set)
+    compile_ids_by_kernel: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for row in operator_rows:
+        if row["operator_kind"] in {"torch_compile", "triton_compiled"}:
+            compile_kernels_by_id[row["operator_id"]].add(row["kernel_name"])
+            compile_ids_by_kernel[(row["operator_kind"], row["kernel_name"])].add(
+                row["operator_id"]
+            )
+    compile_kernels_separate = all(
+        len(kernel_names) == 1 for kernel_names in compile_kernels_by_id.values()
+    ) and all(len(operator_ids) == 1 for operator_ids in compile_ids_by_kernel.values())
     moe_align_rows = [
         row
         for row in operator_rows
@@ -835,22 +851,20 @@ def validate_csv_outputs(
             == {row["kernel_name"] for row in summary_rows}
         ),
         "csv_operator_ids_present": all(
-            (
-                row["operator_id"] == "null"
-                if row["operator_kind"] == "communication"
-                else re.fullmatch(r"[1-9]\d*", row["operator_id"]) is not None
-            )
+            re.fullmatch(r"[1-9]\d*", row["operator_id"]) is not None
             for row in operator_rows
         ),
         "csv_operator_ids_stable": operator_ids_stable,
         "csv_operator_classification_matches": operator_classification_matches,
         "csv_aten_rows_first": aten_rows_first,
-        "csv_communication_rows_unnumbered": all(
-            row["operator_id"] == "null" for row in communication_rows
+        "csv_communication_rows_numbered": all(
+            re.fullmatch(r"[1-9]\d*", row["operator_id"]) is not None
+            for row in communication_rows
         ),
         "csv_communication_rows_last": communication_rows_last,
         "csv_custom_parameter_variants_grouped": (custom_parameter_variants_grouped),
         "csv_kernel_specializations_grouped": kernel_specializations_grouped,
+        "csv_compile_kernels_separate": compile_kernels_separate,
         "csv_moe_align_block_size_grouped": (
             len({row["operator_id"] for row in moe_align_rows}) <= 1
             and all(
