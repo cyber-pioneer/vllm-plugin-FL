@@ -32,22 +32,28 @@ TEXT_TASKS = (
 )
 
 LLM_DETAILS_TASK = (
-    "Introduce large language models (LLMs) in detail. Explain what they are, "
-    "how training and inference work, typical capabilities, limitations, and "
-    "responsible use. Write a coherent response of at least 256 characters. "
-    "Do not repeat words or phrases unnecessarily.",
+    (
+        "Introduce large language models (LLMs) in detail. Explain what they are, "
+        "how training and inference work, typical capabilities, limitations, and "
+        "responsible use. Write a coherent response of at least 256 characters. "
+        "Do not repeat words or phrases unnecessarily."
+    ),
     ("large language model", "training", "inference", "limitations"),
 )
 
 IMAGE_TASKS = (
     (
-        "Name the four quadrant colors in this order: top-left, top-right, "
-        "bottom-left, bottom-right. Reply with color names only.",
+        (
+            "Name the four quadrant colors in this order: top-left, top-right, "
+            "bottom-left, bottom-right. Reply with color names only."
+        ),
         ("red", "green", "blue", "yellow"),
     ),
     (
-        "Name the four quadrant colors in this order: top-left, top-right, "
-        "bottom-left, bottom-right. Reply with color names only.",
+        (
+            "Name the four quadrant colors in this order: top-left, top-right, "
+            "bottom-left, bottom-right. Reply with color names only."
+        ),
         ("blue", "yellow", "red", "green"),
     ),
     (
@@ -59,8 +65,10 @@ IMAGE_TASKS = (
         ("3",),
     ),
     (
-        "Read the two words. The second word has four letters. Copy "
-        "every visible character exactly and reply with the text only.",
+        (
+            "Read the two words. The second word has four letters. Copy "
+            "every visible character exactly and reply with the text only."
+        ),
         ("hello", "vllm"),
     ),
     (
