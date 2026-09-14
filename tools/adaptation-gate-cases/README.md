@@ -130,7 +130,8 @@ graph services when both result sets must be retained; reusing a port
 overwrites that model and port's previous result. A two-model, two-port matrix
 contains 20 JSON files.
 Every file contains the exact inputs, API outputs, timing, per-response checks,
-and a pass/fail summary.
+and a pass/fail summary. On failure, a concise request-level error summary is
+also printed to the terminal.
 
 Responses must contain the expected semantic answer and must not contain empty
 output, `!!!`, mojibake, control characters, suspicious character runs, or

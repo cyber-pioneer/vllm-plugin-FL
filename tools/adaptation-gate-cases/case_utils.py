@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 import unicodedata
 from datetime import datetime, timezone
@@ -294,6 +295,45 @@ def safe_slug(value: str) -> str:
     return slug.strip("-") or "model"
 
 
+def compact_text(value: str, limit: int = 300) -> str:
+    compacted = " ".join(value.split())
+    if len(compacted) <= limit:
+        return compacted
+    return compacted[: limit - 3] + "..."
+
+
+def failure_message(
+    scenario: str,
+    served_model_name: str,
+    port: str,
+    destination: Path,
+    outputs: list[dict[str, Any]],
+) -> str:
+    failed_outputs = [output for output in outputs if not output["passed"]]
+    base_url = os.environ.get("BASE_URL", f"http://127.0.0.1:{port}/v1")
+    lines = [
+        "Adaptation gate failed",
+        f"  Scenario: {scenario}",
+        f"  Model: {served_model_name}",
+        f"  Endpoint: {base_url}",
+        f"  Result: {destination}",
+        f"  Failed requests: {len(failed_outputs)}/{len(outputs)}",
+    ]
+    for output in failed_outputs:
+        request_id = output["request_id"]
+        if error := output.get("error"):
+            lines.append(f"    - {request_id}: {compact_text(error)}")
+            continue
+        failed_checks = [
+            name for name, passed in output.get("checks", {}).items() if not passed
+        ]
+        detail = f"failed checks: {', '.join(failed_checks) or 'unknown'}"
+        if text := compact_text(output.get("text", ""), limit=160):
+            detail += f"; output: {text!r}"
+        lines.append(f"    - {request_id}: {detail}")
+    return "\n".join(lines)
+
+
 async def execute_scenario(
     requests: list[dict[str, Any]], served_model_name: str
 ) -> list[dict[str, Any]]:
@@ -358,4 +398,9 @@ def run_case(scenario: str) -> None:
         json.dumps(document, indent=2, ensure_ascii=True) + "\n", encoding="utf-8"
     )
     temporary.replace(destination)
-    assert document["summary"]["passed"], f"Quality gate failed; inspect {destination}"
+    if not document["summary"]["passed"]:
+        message = failure_message(
+            scenario, served_model_name, port, destination, outputs
+        )
+        print(message, file=sys.stderr, flush=True)
+        raise AssertionError(f"Quality gate failed; inspect {destination}")
