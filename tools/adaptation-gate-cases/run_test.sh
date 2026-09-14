@@ -47,7 +47,7 @@ export PORT="$port"
 export BASE_URL="$base_url"
 export RESULTS_DIR=${RESULTS_DIR:-"$script_dir/results"}
 
-cd "$script_dir"
+cd "$script_dir" || exit 1
 status=0
 pytest -sv test_text.py || status=1
 pytest -sv test_image.py || status=1
