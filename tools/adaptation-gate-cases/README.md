@@ -70,9 +70,10 @@ pytest -sv test_image.py
 pytest -sv test_mix_text_image.py
 ```
 
-The test client only needs the model path and service port. It does not detect
-or depend on the server execution mode. Every model must still be tested once
-with eager execution and once with graph execution; stop the current
+The test client resolves the request model from `SERVED_MODEL_NAME` first and
+falls back to `MODEL_PATH`; it never uses an implicit model name. It does not
+detect or depend on the server execution mode. Every model must still be tested
+once with eager execution and once with graph execution; stop the current
 service before switching modes:
 
 - `/models/Qwen3.6-27B`
@@ -80,8 +81,9 @@ service before switching modes:
 - `eager`
 - `graph`
 
-The serve scripts and `run_test.sh` require the `MODEL_PATH` and `PORT`
-environment variables.
+The serve scripts require `MODEL_PATH` and `PORT`. Their served model name uses
+`SERVED_MODEL_NAME` when set and otherwise falls back to `MODEL_PATH`.
+`run_test.sh` requires `PORT` plus either `SERVED_MODEL_NAME` or `MODEL_PATH`.
 Useful environment overrides are `TENSOR_PARALLEL_SIZE`, `MAX_MODEL_LEN`, and
 `SERVER_PID_FILE`. `run_test.sh` also supports `BASE_URL`, `SERVICE_TIMEOUT`,
 `REQUEST_TIMEOUT`, `SERVER_PID_FILE`, and `RESULTS_DIR`.
@@ -92,7 +94,8 @@ from this directory. For example:
 
 ```bash
 vllm serve /models/Qwen3.6-27B \
-    --served-model-name qwen \
+    --served-model-name /models/Qwen3.6-27B \
+    --host 127.0.0.1 \
     --port 8000 \
     --tensor-parallel-size 2 \
     --max-model-len 32768 \
@@ -106,9 +109,9 @@ run `MODEL_PATH=/path/to/model PORT=8000 ./run_test.sh` against each service.
 Both runs are mandatory even though the test client does not need to know the
 execution mode.
 
-Each pytest file or individual case can also be run directly. `MODEL_PATH` and
-`PORT` are required parameters. `MODEL_PATH` is used as a result label, while
-`PORT` selects the service:
+Each pytest file or individual case can also be run directly. `PORT` and at
+least one of `SERVED_MODEL_NAME` or `MODEL_PATH` are required. The result label
+uses `MODEL_PATH` when available and otherwise uses `SERVED_MODEL_NAME`:
 
 ```ini
 MODEL_PATH=/models/Qwen3.6-27B PORT=8000 pytest -sv test_text.py

@@ -25,14 +25,15 @@ if [[ ! "$port" =~ ^[0-9]+$ ]] || (( 10#$port < 1 || 10#$port > 65535 )); then
     echo "Port must be an integer from 1 to 65535: $port" >&2
     exit 2
 fi
+served_model_name=${SERVED_MODEL_NAME:-$model_path}
 if [[ -z ${VLLM_PLUGINS+x} ]]; then
     export VLLM_PLUGINS=fl
 fi
 printf '%s\n' "$$" >"${SERVER_PID_FILE:-$script_dir/.server.pid}"
 
 exec vllm serve "$model_path" \
-    --served-model-name "${SERVED_MODEL_NAME:-qwen}" \
-    --host 0.0.0.0 \
+    --served-model-name "$served_model_name" \
+    --host 127.0.0.1 \
     --port "$((10#$port))" \
     --tensor-parallel-size "${TENSOR_PARALLEL_SIZE:-2}" \
     --max-model-len "${MAX_MODEL_LEN:-32768}" \

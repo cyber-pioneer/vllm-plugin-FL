@@ -236,13 +236,25 @@ def quality_checks(
     }
 
 
+def resolve_served_model_name() -> str:
+    served_model_name = os.environ.get("SERVED_MODEL_NAME")
+    if served_model_name:
+        return served_model_name
+    model_path = os.environ.get("MODEL_PATH")
+    if model_path:
+        return model_path
+    raise RuntimeError("SERVED_MODEL_NAME or MODEL_PATH is required")
+
+
 async def execute_request(
-    client: AsyncOpenAI, request: dict[str, Any]
+    client: AsyncOpenAI,
+    request: dict[str, Any],
+    served_model_name: str,
 ) -> dict[str, Any]:
     started = time.perf_counter()
     try:
         completion = await client.chat.completions.create(
-            model=os.environ.get("SERVED_MODEL_NAME", "qwen"),
+            model=served_model_name,
             messages=request["messages"],
             max_tokens=int(
                 request.get("max_tokens", os.environ.get("MAX_TOKENS", "128"))
@@ -282,7 +294,9 @@ def safe_slug(value: str) -> str:
     return slug.strip("-") or "model"
 
 
-async def execute_scenario(requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+async def execute_scenario(
+    requests: list[dict[str, Any]], served_model_name: str
+) -> list[dict[str, Any]]:
     port = os.environ["PORT"]
     client = AsyncOpenAI(
         api_key=os.environ.get("API_KEY", "EMPTY"),
@@ -291,24 +305,25 @@ async def execute_scenario(requests: list[dict[str, Any]]) -> list[dict[str, Any
     )
     try:
         return await asyncio.gather(
-            *(execute_request(client, request) for request in requests)
+            *(
+                execute_request(client, request, served_model_name)
+                for request in requests
+            )
         )
     finally:
         await client.close()
 
 
 def run_case(scenario: str) -> None:
-    served_model_name = os.environ.get("SERVED_MODEL_NAME", "qwen")
+    served_model_name = resolve_served_model_name()
     model_path = os.environ.get("MODEL_PATH")
     port = os.environ.get("PORT")
-    if not model_path or not port:
-        raise RuntimeError(
-            "MODEL_PATH and PORT are required; use run_test.sh or set both "
-            "environment variables"
-        )
+    if not port:
+        raise RuntimeError("PORT is required; use run_test.sh or set it directly")
+    model_label = model_path or served_model_name
     requests = scenario_requests(scenario)
     started_at = datetime.now(timezone.utc)
-    outputs = asyncio.run(execute_scenario(requests))
+    outputs = asyncio.run(execute_scenario(requests, served_model_name))
     passed_count = sum(bool(output["passed"]) for output in outputs)
     document = {
         "schema_version": 1,
@@ -333,7 +348,7 @@ def run_case(scenario: str) -> None:
     results_root = Path(os.environ.get("RESULTS_DIR", str(ROOT / "results")))
     destination = (
         results_root
-        / safe_slug(model_path)
+        / safe_slug(model_label)
         / f"port-{safe_slug(port)}"
         / f"{scenario}.json"
     )

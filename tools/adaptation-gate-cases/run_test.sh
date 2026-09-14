@@ -10,12 +10,13 @@ fi
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 model_path=${MODEL_PATH:-}
+served_model_name=${SERVED_MODEL_NAME:-}
 port=${PORT:-}
 service_timeout=${SERVICE_TIMEOUT:-1800}
 server_pid_file=${SERVER_PID_FILE:-"$script_dir/.server.pid"}
 
-if [[ -z "$model_path" || -z "$port" ]]; then
-    echo "MODEL_PATH and PORT are required." >&2
+if [[ -z "$served_model_name" && -z "$model_path" ]] || [[ -z "$port" ]]; then
+    echo "SERVED_MODEL_NAME or MODEL_PATH, and PORT are required." >&2
     echo "Usage: MODEL_PATH=/path/to/model PORT=8000 $0" >&2
     exit 2
 fi
