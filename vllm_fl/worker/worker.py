@@ -739,8 +739,17 @@ class WorkerFL(WorkerBase):
         ### NOTE(lms): can add gems kernel pretune here
         # Warmup and tune the kernels used during model execution before
         # cuda graph capture.
-        if current_platform.device_type == "txda":
-            logger.warning("Detected txda device, skipping kernel_warmup")
+        if current_platform.device_type == "txda" or getattr(
+            current_platform, "vendor_name", None
+        ) == "kunlunxin":
+            logger.warning(
+                "Detected %s device, skipping generic kernel_warmup",
+                getattr(
+                    current_platform,
+                    "vendor_name",
+                    current_platform.device_type,
+                ),
+            )
         else:
             try:
                 kernel_warmup(self)

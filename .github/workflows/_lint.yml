@@ -61,6 +61,7 @@ jobs:
             python:
               - '**/*.py'
               - '**/*.pyi'
+              - '!vllm_fl/**'
             shell:
               - '**/*.sh'
 

@@ -56,12 +56,17 @@ VENDOR_DEVICE_MAP: dict[str, dict[str, str]] = {
     # "gcu" — keep both aliases.
     "gcu": {"device_type": "gcu", "device_name": "gcu"},
     "enflame": {"device_type": "gcu", "device_name": "gcu"},
+    # Registered backend: vendor/kunlunxin
+    "kunlunxin": {"device_type": "cuda", "device_name": "kunlunxin"},
 }
 
 # Keep the vLLM base-class no-op for platforms not validated by this change.
 # Operators can opt a platform in without a code change via the override below.
 _DEVICE_CONTROL_ENV_VAR_PLACEHOLDER = "VLLM_DEVICE_CONTROL_ENV_VAR_PLACEHOLDER"
-_VALIDATED_DEVICE_CONTROL_ENV_VARS = {"nvidia": "CUDA_VISIBLE_DEVICES"}
+_VALIDATED_DEVICE_CONTROL_ENV_VARS = {
+    "nvidia": "CUDA_VISIBLE_DEVICES",
+    "kunlunxin": "CUDA_VISIBLE_DEVICES",
+}
 
 
 def _get_vendor_device_field(vendor_name: str, field: str) -> str:
@@ -265,8 +270,12 @@ class DeviceInfo:
             "mthreads",
             "sunrise",
             "thead",
+<<<<<<< HEAD
             "gcu",
             "enflame",
+=======
+            "kunlunxin",
+>>>>>>> 0384664 (update kunlunxin to vllm 0.24)
         ]
         backend.set_torch_backend_device_fn(self.device.vendor_name)
 

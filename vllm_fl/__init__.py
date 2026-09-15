@@ -5,6 +5,49 @@ import logging
 import os
 import sys
 
+
+def _patch_flag_gems_triton_import_compat():
+    """Allow newer FlagGems to load with the Kunlunxin Triton runtime.
+
+    FlagGems 5.4 registers ``_dirichlet_grad`` at import time and asks Triton
+    to resolve ``tl.map_elementwise`` while computing the JIT cache key.  The
+    Kunlunxin Triton runtime does not expose that builtin.  vLLM does not use
+    this operator and the Kunlunxin dispatch config blacklists it, so provide
+    only an import-time sentinel.  If it is ever invoked, fail explicitly
+    instead of silently producing an incorrect result.
+    """
+    try:
+        import triton
+        import triton.language as tl
+    except ImportError:
+        return
+    if not hasattr(tl, "map_elementwise"):
+        def _unsupported_map_elementwise(*args, **kwargs):
+            raise NotImplementedError(
+                "triton.language.map_elementwise is unavailable on Kunlunxin; "
+                "the FlagGems _dirichlet_grad operator must remain blacklisted"
+            )
+
+        _unsupported_map_elementwise.__name__ = "map_elementwise"
+        _unsupported_map_elementwise.__module__ = "triton.language"
+        _unsupported_map_elementwise.__triton_builtin__ = True
+        tl.map_elementwise = _unsupported_map_elementwise
+
+    try:
+        importlib.import_module("triton.knobs")
+    except ModuleNotFoundError as exc:
+        if exc.name != "triton.knobs":
+            raise
+        import types
+
+        knobs = types.ModuleType("triton.knobs")
+        knobs.autotuning = types.SimpleNamespace(adjust_block_size=True)
+        sys.modules[knobs.__name__] = knobs
+        triton.knobs = knobs
+
+
+_patch_flag_gems_triton_import_compat()
+
 # torch.float4_e2m1fn_x2 exists only in CUDA builds of PyTorch 2.7+.
 # vllm.ir.tolerances references it at module level, so we inject a sentinel
 # before any vllm.ir import can happen.
@@ -104,8 +147,22 @@ def _patch_custom_ops():
     register_op_schemas()
 
 
+def _init_vendor_device():
+    """Apply compatibility hooks that must run before vLLM model imports."""
+    from vllm_fl.utils import DeviceInfo
+
+    if DeviceInfo().vendor_name == "kunlunxin":
+        from vllm_fl.dispatch.backends.vendor.kunlunxin.patches.patch_fla_utils import (
+            _patch_xpu_get_device,
+        )
+
+        _patch_xpu_get_device()
+
+
 def register():
     """Register the FL platform."""
+    _init_vendor_device()
+
     # PlatformFL is accelerator-shaped. For the standard FlagGems ARM target,
     # preserve vLLM's stock CPU platform and install kernels in register_model().
     arm_cpu_platform = _arm_cpu_platform()
