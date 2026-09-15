@@ -270,12 +270,9 @@ class DeviceInfo:
             "mthreads",
             "sunrise",
             "thead",
-<<<<<<< HEAD
             "gcu",
             "enflame",
-=======
             "kunlunxin",
->>>>>>> 0384664 (update kunlunxin to vllm 0.24)
         ]
         backend.set_torch_backend_device_fn(self.device.vendor_name)
 
