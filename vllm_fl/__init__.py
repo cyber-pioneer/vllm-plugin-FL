@@ -119,6 +119,15 @@ def _patch_flash_attn_import():
         import vllm.vllm_flash_attn  # noqa: F401
     except ImportError:
         import types
+
+        # ``vllm_flash_attn.__init__`` imports ``flash_attn_interface`` before
+        # checking whether the CUDA FA extensions are available.  When that
+        # final check raises, Python removes the parent package but leaves the
+        # successfully imported interface module cached.  Reusing that orphan
+        # later makes its missing relative C extension look like a circular
+        # import and emits one error per model layer.  Drop the failed probe's
+        # child before installing the non-CUDA fallback package.
+        sys.modules.pop("vllm.vllm_flash_attn.flash_attn_interface", None)
         stub = types.ModuleType("vllm.vllm_flash_attn")
         stub.FA2_AVAILABLE = False
         stub.FA3_AVAILABLE = False
