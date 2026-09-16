@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import vllm_fl
 
-
 _PARENT = "vllm.vllm_flash_attn"
 _INTERFACE = f"{_PARENT}.flash_attn_interface"
 _OTHER_CHILD = f"{_PARENT}.other_child"
