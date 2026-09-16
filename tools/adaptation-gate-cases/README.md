@@ -1,10 +1,11 @@
 # Adaptation Gate Cases
 
-| Model | Eager cases | Graph cases | Total cases |
-|---|---:|---:|---:|
-| `Qwen3.6-27B` | 5 | 5 | 10 |
-| `Qwen3.6-35B-A3B` | 5 | 5 | 10 |
-| **Total** | **10** | **10** | **20** |
+| Model | mode |single long text case | single long image case| text cases | image cases |mixed text and image cases | total cases
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `Qwen3.6-27B` | eager  | 1 | 1 | 8 | 8 | 4+4 | 26 |
+| `Qwen3.6-27B` | graph  | 1 | 1 | 8 | 8 | 4+4 | 26 |
+| `Qwen3.6-35B-A3B` | eager | 1 | 1 | 8 | 8 |  4+4 | 26 |
+| `Qwen3.6-35B-A3B` | graph | 1 | 1 | 8 | 8 |  4+4 | 26 |
 
 The matrix counts pytest scenarios; each concurrent scenario sends eight
 requests.
