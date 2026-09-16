@@ -17,9 +17,9 @@ Each mode runs the following scenarios:
 
 | Test file | Scenarios |
 |---|---|
-| `test_text.py` | Single text case; 8 text cases |
-| `test_image.py` | Single image case; 8 image cases |
-| `test_mix_text_image.py` | 8 mixed text-image cases |
+| `test_text.py` | Single text case; 8 concurrent text cases |
+| `test_image.py` | Single image case; 8 concurrent image cases |
+| `test_mix_text_image.py` | 8 concurrent mixed text-image cases |
 
 ## Files
 
