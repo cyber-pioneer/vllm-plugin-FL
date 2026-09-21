@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Compare native and plugin inventories and emit FlagOS coverage by API."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from rule.rule_coverage import classify_coverage, read_flagos_evidence
+
+
+def read_rows(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8", newline="") as source:
+        return list(csv.DictReader(source))
+
+
+def group_by_operator_id(
+    rows: list[dict[str, str]],
+) -> dict[int, dict[str, set[str]]]:
+    groups: dict[int, dict[str, set[str]]] = defaultdict(
+        lambda: {
+            "operator_names": set(),
+            "operator_kinds": set(),
+            "kernel_names": set(),
+        }
+    )
+    for row in rows:
+        operator_id = int(row["operator_id"])
+        groups[operator_id]["operator_names"].add(row["operator_name"])
+        groups[operator_id]["operator_kinds"].add(row["operator_kind"])
+        groups[operator_id]["kernel_names"].add(row["kernel_name"])
+    return dict(groups)
+
+
+def encoded(values: set[str]) -> str:
+    return json.dumps(sorted(values), ensure_ascii=True, separators=(",", ":"))
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--baseline", required=True, type=Path)
+    parser.add_argument("--plugin", required=True, type=Path)
+    parser.add_argument("--flaggems-oplist", type=Path)
+    parser.add_argument("--output", required=True, type=Path)
+    args = parser.parse_args()
+
+    baseline = group_by_operator_id(read_rows(args.baseline))
+    plugin = group_by_operator_id(read_rows(args.plugin))
+    evidence = read_flagos_evidence(args.flaggems_oplist)
+
+    plugin_by_name: dict[str, set[int]] = defaultdict(set)
+    for operator_id, values in plugin.items():
+        for operator_name in values["operator_names"]:
+            plugin_by_name[operator_name].add(operator_id)
+
+    rows: list[dict[str, Any]] = []
+    for operator_id in sorted(baseline):
+        values = baseline[operator_id]
+        matching_plugin_ids = set()
+        for operator_name in values["operator_names"]:
+            matching_plugin_ids.update(plugin_by_name.get(operator_name, set()))
+        plugin_kernel_names: set[str] = set()
+        for plugin_operator_id in matching_plugin_ids:
+            plugin_kernel_names.update(plugin[plugin_operator_id]["kernel_names"])
+        decision = classify_coverage(
+            values["operator_names"],
+            values["operator_kinds"],
+            values["kernel_names"],
+            plugin_kernel_names,
+            evidence,
+        )
+        rows.append(
+            {
+                "operator_id": operator_id,
+                "operator_name": encoded(values["operator_names"]),
+                "operator_kind": encoded(values["operator_kinds"]),
+                "kernel_name": encoded(values["kernel_names"]),
+                "plugin_operator_id": json.dumps(sorted(matching_plugin_ids)),
+                "flagos_covered": "yes" if decision.covered else "no",
+                "flagos_category": decision.category,
+                "evidence": decision.evidence,
+            }
+        )
+
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(rows[0]) if rows else [
+        "operator_id",
+        "operator_name",
+        "operator_kind",
+        "kernel_name",
+        "plugin_operator_id",
+        "flagos_covered",
+        "flagos_category",
+        "evidence",
+    ]
+    with args.output.open("w", encoding="utf-8", newline="") as target:
+        writer = csv.DictWriter(target, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    numerator = sum(row["flagos_covered"] == "yes" for row in rows)
+    denominator = len(rows)
+    percent = numerator / denominator * 100 if denominator else 0.0
+    print(
+        json.dumps(
+            {
+                "numerator": numerator,
+                "denominator": denominator,
+                "coverage_percent": round(percent, 3),
+                "output": str(args.output),
+            },
+            sort_keys=True,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()
