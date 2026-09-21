@@ -10,16 +10,24 @@ import json
 import re
 from collections import Counter, defaultdict
 from collections.abc import Iterable
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from rule.rule_map import (
-    OperatorIdentity,
-    kernel_callable_identity_name,
-    operator_descriptor,
-    staged_kernel_family_name,
-)
+if __package__:
+    from .rule.rule_map import (
+        OperatorIdentity,
+        kernel_callable_identity_name,
+        operator_descriptor,
+        staged_kernel_family_name,
+    )
+else:
+    from rule.rule_map import (
+        OperatorIdentity,
+        kernel_callable_identity_name,
+        operator_descriptor,
+        staged_kernel_family_name,
+    )
 
 GPU_CATEGORIES = {"kernel", "gpu_memcpy", "gpu_memset"}
 MetadataKey = tuple[str, str | None, str | None, str]
@@ -94,6 +102,16 @@ def format_percent(value_ns: int, total_ns: int) -> str:
     if percent < 0.001:
         return "<0.001%"
     return f"{percent:.3f}%"
+
+
+def format_operator_time_percent(value_ns: int, total_ns: int) -> str:
+    percent = Decimal(value_ns) * 100 / Decimal(total_ns) if total_ns else Decimal(0)
+    if percent < Decimal("0.01"):
+        return "<0.01%"
+    return format(
+        percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
+        "f",
+    )
 
 
 def metadata(event: dict[str, Any]) -> MetadataKey:
@@ -451,6 +469,7 @@ def summary_csv_rows(
 
 def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     relations: dict[tuple[str, str, str], OperatorIdentity | None] = {}
+    relation_ns: Counter[tuple[str, str, str]] = Counter()
     for summary_row in summary_rows:
         kernel_name = summary_row["kernel_name"]
         operator_name, operator_kind, identity = operator_descriptor(
@@ -460,6 +479,9 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
         previous = relations.setdefault(relation, identity)
         if previous != identity:
             raise RuntimeError(f"conflicting operator identities for {relation}")
+        relation_ns[relation] += csv_us_to_ns(str(summary_row["kernel_time_us"]))
+
+    kernel_total_ns = sum(relation_ns.values())
 
     identities = sorted(
         {identity for identity in relations.values() if identity is not None},
@@ -494,6 +516,9 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
                 "operator_name": operator_name,
                 "operator_kind": operator_kind,
                 "kernel_name": kernel_name,
+                "kernel_time_percent": format_operator_time_percent(
+                    relation_ns[relation], kernel_total_ns
+                ),
             }
         )
     return rows
@@ -779,7 +804,13 @@ def main() -> None:
     )
     write_csv(
         operator_list_path,
-        ["operator_id", "operator_name", "operator_kind", "kernel_name"],
+        [
+            "operator_id",
+            "operator_name",
+            "operator_kind",
+            "kernel_name",
+            "kernel_time_percent",
+        ],
         operator_list_rows(summary_rows),
     )
     summary["conservation"].update(
