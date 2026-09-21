@@ -87,16 +87,20 @@ def main() -> None:
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = list(rows[0]) if rows else [
-        "operator_id",
-        "operator_name",
-        "operator_kind",
-        "kernel_name",
-        "plugin_operator_id",
-        "flagos_covered",
-        "flagos_category",
-        "evidence",
-    ]
+    fieldnames = (
+        list(rows[0])
+        if rows
+        else [
+            "operator_id",
+            "operator_name",
+            "operator_kind",
+            "kernel_name",
+            "plugin_operator_id",
+            "flagos_covered",
+            "flagos_category",
+            "evidence",
+        ]
+    )
     with args.output.open("w", encoding="utf-8", newline="") as target:
         writer = csv.DictWriter(target, fieldnames=fieldnames)
         writer.writeheader()

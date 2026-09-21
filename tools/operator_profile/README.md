@@ -22,7 +22,7 @@ Qwen plugin graph example:
 
 ```bash
 RUN_DIR=/workspace/op_profile/qwen_plugin_graph_4096_256
-VLLM_PLUGINS=fl bash tools/operator_profile/serve.sh \
+VLLM_PLUGINS=fl USE_FLAGTUNE=0 bash tools/operator_profile/serve.sh \
   /models/Qwen3.6-35B-A3B qwen "$RUN_DIR" \
   --tensor-parallel-size 2 \
   --max-model-len 32768 \
@@ -30,7 +30,7 @@ VLLM_PLUGINS=fl bash tools/operator_profile/serve.sh \
   --no-enable-prefix-caching \
   --trust-remote-code \
   --compilation-config \
-    '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64],"cudagraph_num_of_warmups":0}'
+    '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64]}'
 ```
 
 Qwen native-vLLM graph baseline:
@@ -45,14 +45,14 @@ VLLM_PLUGINS="" bash tools/operator_profile/serve.sh \
   --no-enable-prefix-caching \
   --trust-remote-code \
   --compilation-config \
-    '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64],"cudagraph_num_of_warmups":0}'
+    '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64]}'
 ```
 
 DeepSeek plugin graph example:
 
 ```bash
 RUN_DIR=/workspace/op_profile/deepseek_plugin_graph_4096_256
-VLLM_PLUGINS=fl bash tools/operator_profile/serve.sh \
+VLLM_PLUGINS=fl USE_FLAGTUNE=0 bash tools/operator_profile/serve.sh \
   /models/DeepSeek-V4-Flash deepseek-v4-flash "$RUN_DIR" \
   --tensor-parallel-size 8 \
   --kv-cache-dtype fp8 \
@@ -64,12 +64,17 @@ VLLM_PLUGINS=fl bash tools/operator_profile/serve.sh \
   --no-enable-prefix-caching \
   --trust-remote-code \
   --compilation-config \
-    '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64],"cudagraph_num_of_warmups":0}'
+    '{"cudagraph_capture_sizes":[1,2,4,8,16,32,64]}'
 ```
 
 The examples do not set `VLLM_USE_BREAKABLE_CUDAGRAPH`; vLLM retains its native
 model- and version-specific selection. Omit `--enforce-eager` for graph mode and
 add it only for an eager run.
+
+`USE_FLAGTUNE=0` disables the optional remote FlagTune cost model while keeping
+FlagGems kernels and their local Triton autotuning enabled. It makes offline runs
+independent of FlagTune model downloads. Remove it when remote FlagTune models
+are available and intentionally part of the test.
 
 Before startup, `serve.sh` removes an earlier temporary
 `/tmp/flaggems_enable_oplist.txt`. This prevents stale plugin evidence from

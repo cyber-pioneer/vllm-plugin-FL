@@ -18,6 +18,11 @@ if [[ ! -d "$PROFILE_DIR" ]]; then
   echo "profile directory does not exist: $PROFILE_DIR" >&2
   exit 1
 fi
+exec 9>"$RUN_DIR/.profile.lock"
+if ! flock -n 9; then
+  echo "another profile process is already using: $RUN_DIR" >&2
+  exit 1
+fi
 if find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.pt.trace.json*' -print -quit |
   grep -q .; then
   echo "profile directory already contains a trace: $PROFILE_DIR" >&2

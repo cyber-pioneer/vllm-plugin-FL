@@ -15,16 +15,17 @@ from pathlib import Path
 from typing import Any
 
 from rule.rule_map import (
-    MOE_ALIGN_BLOCK_SIZE_KERNEL,
-    MOE_ALIGN_BLOCK_SIZE_OPERATOR,
     OperatorIdentity,
     kernel_callable_identity_name,
     operator_descriptor,
+    staged_kernel_family_name,
 )
 
 GPU_CATEGORIES = {"kernel", "gpu_memcpy", "gpu_memset"}
 MetadataKey = tuple[str, str | None, str | None, str]
 MappingKey = tuple[str, str | None, str, str, str | None]
+
+
 def iter_events(path: Path) -> Iterable[dict[str, Any]]:
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as source:
@@ -615,9 +616,6 @@ def validate_csv_outputs(
         operator_ids_stable &= (
             previous_id == operator_id and previous_identity == identity
         )
-    nvjet_rows = [
-        row for row in operator_rows if row["operator_kind"] == "unattributed_nvjet"
-    ]
     communication_rows = [
         row for row in operator_rows if row["operator_kind"] == "communication"
     ]
@@ -637,10 +635,7 @@ def validate_csv_outputs(
 
     custom_ids_by_identity: dict[str, set[str]] = defaultdict(set)
     for row in operator_rows:
-        if (
-            row["operator_kind"] == "custom"
-            and row["operator_name"] != MOE_ALIGN_BLOCK_SIZE_OPERATOR
-        ):
+        if row["operator_kind"] == "custom":
             identity = kernel_callable_identity_name(row["kernel_name"])
             custom_ids_by_identity[identity].add(row["operator_id"])
     custom_parameter_variants_grouped = all(
@@ -668,11 +663,14 @@ def validate_csv_outputs(
     compile_kernels_separate = all(
         len(kernel_names) == 1 for kernel_names in compile_kernels_by_id.values()
     ) and all(len(operator_ids) == 1 for operator_ids in compile_ids_by_kernel.values())
-    moe_align_rows = [
-        row
-        for row in operator_rows
-        if MOE_ALIGN_BLOCK_SIZE_KERNEL.fullmatch(row["kernel_name"])
-    ]
+    staged_ids_by_family: dict[str, set[str]] = defaultdict(set)
+    for row in operator_rows:
+        family = staged_kernel_family_name(row["kernel_name"])
+        if family is not None:
+            staged_ids_by_family[family].add(row["operator_id"])
+    staged_kernel_families_grouped = all(
+        len(operator_ids) == 1 for operator_ids in staged_ids_by_family.values()
+    )
     return {
         "csv_kernel_key_sets_match": (
             set(summary_keys) == set(expected_keys)
@@ -716,18 +714,7 @@ def validate_csv_outputs(
         "csv_custom_parameter_variants_grouped": (custom_parameter_variants_grouped),
         "csv_kernel_specializations_grouped": kernel_specializations_grouped,
         "csv_compile_kernels_separate": compile_kernels_separate,
-        "csv_moe_align_block_size_grouped": (
-            len({row["operator_id"] for row in moe_align_rows}) <= 1
-            and all(
-                row["operator_name"] == MOE_ALIGN_BLOCK_SIZE_OPERATOR
-                and row["operator_kind"] == "custom"
-                for row in moe_align_rows
-            )
-        ),
-        "csv_unattributed_nvjet_grouped": (
-            len({row["operator_id"] for row in nvjet_rows}) <= 1
-            and all(row["kernel_name"].startswith("nvjet_tst_") for row in nvjet_rows)
-        ),
+        "csv_staged_kernel_families_grouped": staged_kernel_families_grouped,
     }
 
 

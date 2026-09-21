@@ -134,8 +134,7 @@ def classify_coverage(
         return CoverageDecision(
             True,
             "flaggems",
-            "known FlagGems kernel implementation: "
-            + ",".join(matched_kernel_rules),
+            "known FlagGems kernel implementation: " + ",".join(matched_kernel_rules),
         )
     matched_fused = sorted(operator_names & set(evidence.fused_apis))
     if matched_fused:

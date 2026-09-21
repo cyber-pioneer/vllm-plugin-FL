@@ -143,6 +143,14 @@ class PlatformFL(Platform):
             return False
         return major >= 9
 
+    @classmethod
+    def get_default_ir_op_priority(cls, vllm_config: "VllmConfig"):
+        if cls.vendor_name == "nvidia":
+            from vllm.platforms.cuda import CudaPlatform
+
+            return CudaPlatform.get_default_ir_op_priority(vllm_config)
+        return super().get_default_ir_op_priority(vllm_config)
+
     def is_musa(self) -> bool:
         if hasattr(torch, 'musa') and torch.musa.is_available():
             return True

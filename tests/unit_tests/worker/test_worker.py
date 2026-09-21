@@ -140,6 +140,44 @@ def test_musa_worker_rejects_parameters_on_another_rank(monkeypatch):
         worker_module.WorkerFL.load_model(worker)
 
 
+def test_nvidia_uses_upstream_model_runner(monkeypatch):
+    import vllm.v1.worker.gpu_model_runner as upstream_runner
+    import vllm_fl.worker.worker as worker_module
+
+    expected = object()
+    config = SimpleNamespace(use_v2_model_runner=False)
+    device = torch.device("cuda:0")
+    monkeypatch.setattr(
+        worker_module, "current_platform", SimpleNamespace(vendor_name="nvidia")
+    )
+    monkeypatch.setattr(
+        upstream_runner, "GPUModelRunner", lambda actual_config, actual_device: expected
+    )
+
+    actual = worker_module._create_model_runner(config, device)
+
+    assert actual is expected
+
+
+def test_non_nvidia_uses_fl_model_runner(monkeypatch):
+    import vllm_fl.worker.model_runner as fl_runner
+    import vllm_fl.worker.worker as worker_module
+
+    expected = object()
+    config = SimpleNamespace(use_v2_model_runner=False)
+    device = torch.device("cpu")
+    monkeypatch.setattr(
+        worker_module, "current_platform", SimpleNamespace(vendor_name="test")
+    )
+    monkeypatch.setattr(
+        fl_runner, "ModelRunnerFL", lambda actual_config, actual_device: expected
+    )
+
+    actual = worker_module._create_model_runner(config, device)
+
+    assert actual is expected
+
+
 class TestMemorySnapshot:
     """Test MemorySnapshot dataclass behavior."""
 
