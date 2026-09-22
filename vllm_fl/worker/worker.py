@@ -213,21 +213,6 @@ def memory_profiling_fl(
     )
 
 
-def _create_model_runner(vllm_config: VllmConfig, device: torch.device):
-    """Use vLLM's current CUDA runner unless an OOT device needs FL adapters."""
-    if current_platform.vendor_name == "nvidia":
-        if vllm_config.use_v2_model_runner:
-            from vllm.v1.worker.gpu.model_runner import GPUModelRunner
-        else:
-            from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-        return GPUModelRunner(vllm_config, device)
-
-    from vllm_fl.worker.model_runner import ModelRunnerFL
-
-    return ModelRunnerFL(vllm_config, device)
-
-
 class WorkerFL(WorkerBase):
     def __init__(
         self,
@@ -520,7 +505,9 @@ class WorkerFL(WorkerBase):
         init_workspace_manager(self.device, num_ubatches)
 
         # Construct the model runner
-        self.model_runner = _create_model_runner(self.vllm_config, self.device)
+        from vllm_fl.worker.model_runner import ModelRunnerFL
+
+        self.model_runner = ModelRunnerFL(self.vllm_config, self.device)
 
         if self.rank == 0:
             # If usage stat is enabled, collect relevant info.
