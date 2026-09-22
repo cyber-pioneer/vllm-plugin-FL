@@ -132,7 +132,7 @@ def main() -> None:
                 "covered_operator_count": numerator,
                 "undetermined_operator_count": undetermined,
                 "total_operator_count": denominator,
-                "coverage_percent(%)": f"{percent:.3f}",
+                "coverage_percent(%)": f"{percent:.2f}",
             }
         )
     print(
@@ -141,7 +141,7 @@ def main() -> None:
                 "numerator": numerator,
                 "undetermined": undetermined,
                 "denominator": denominator,
-                "coverage_percent": round(percent, 3),
+                "coverage_percent": round(percent, 2),
                 "output": str(args.output),
                 "percent_output": str(percent_output),
             },
