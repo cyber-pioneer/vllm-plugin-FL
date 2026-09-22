@@ -23,7 +23,7 @@ if ! flock -n 9; then
   echo "another profile process is already using: $RUN_DIR" >&2
   exit 1
 fi
-if find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.pt.trace.json*' -print -quit |
+if find "$PROFILE_DIR" -type f -name '*.pt.trace.json*' -print -quit |
   grep -q .; then
   echo "profile directory already contains a trace: $PROFILE_DIR" >&2
   exit 1
@@ -31,15 +31,21 @@ fi
 
 profiling=0
 stop_profile() {
+  local best_effort=${1:-0}
   if [[ "$profiling" -eq 1 ]]; then
-    curl -fsS -XPOST "$BASE_URL/stop_profile"
-    profiling=0
+    if curl -fsS -XPOST "$BASE_URL/stop_profile"; then
+      profiling=0
+    elif [[ "$best_effort" -eq 1 ]]; then
+      echo "warning: failed to stop profiler during cleanup" >&2
+    else
+      return 1
+    fi
   fi
 }
-trap stop_profile EXIT
+trap 'stop_profile 1' EXIT
 
 deadline=$((SECONDS + HEALTH_TIMEOUT))
-until curl -fsS "$BASE_URL/health" >/dev/null 2>&1; do
+until curl -fsS --max-time 10 "$BASE_URL/health" >/dev/null 2>&1; do
   if ((SECONDS >= deadline)); then
     echo "server health check timed out after $HEALTH_TIMEOUT seconds" >&2
     exit 1

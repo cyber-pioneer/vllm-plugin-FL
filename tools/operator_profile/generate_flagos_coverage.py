@@ -12,6 +12,17 @@ from typing import Any
 
 from rule.rule_coverage import classify_coverage, read_flagos_evidence
 
+COVERAGE_FIELDNAMES = [
+    "operator_id",
+    "operator_name",
+    "operator_kind",
+    "flagos_covered",
+    "flagos_type",
+    "kernel_name",
+    "plugin_operator_id",
+    "evidence",
+]
+
 
 def read_rows(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8", newline="") as source:
@@ -78,35 +89,21 @@ def main() -> None:
                 "operator_id": operator_id,
                 "operator_name": encoded(values["operator_names"]),
                 "operator_kind": encoded(values["operator_kinds"]),
+                "flagos_covered": "true" if decision.covered else "false",
+                "flagos_type": decision.flagos_type,
                 "kernel_name": encoded(values["kernel_names"]),
                 "plugin_operator_id": json.dumps(sorted(matching_plugin_ids)),
-                "flagos_covered": "yes" if decision.covered else "no",
-                "flagos_category": decision.category,
                 "evidence": decision.evidence,
             }
         )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = (
-        list(rows[0])
-        if rows
-        else [
-            "operator_id",
-            "operator_name",
-            "operator_kind",
-            "kernel_name",
-            "plugin_operator_id",
-            "flagos_covered",
-            "flagos_category",
-            "evidence",
-        ]
-    )
     with args.output.open("w", encoding="utf-8", newline="") as target:
-        writer = csv.DictWriter(target, fieldnames=fieldnames)
+        writer = csv.DictWriter(target, fieldnames=COVERAGE_FIELDNAMES)
         writer.writeheader()
         writer.writerows(rows)
 
-    numerator = sum(row["flagos_covered"] == "yes" for row in rows)
+    numerator = sum(row["flagos_covered"] == "true" for row in rows)
     denominator = len(rows)
     percent = numerator / denominator * 100 if denominator else 0.0
     print(

@@ -32,34 +32,88 @@ else:
 GPU_CATEGORIES = {"kernel", "gpu_memcpy", "gpu_memset"}
 MetadataKey = tuple[str, str | None, str | None, str]
 MappingKey = tuple[str, str | None, str, str, str | None]
+TRACE_READ_CHUNK_SIZE = 1024 * 1024
 
 
 def iter_events(path: Path) -> Iterable[dict[str, Any]]:
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8") as source:
-        prefix = source.read(4096)
-        source.seek(0)
-        if '"traceEvents"' not in prefix:
-            yield from json.load(source).get("traceEvents", [])
-            return
-        for line in source:
-            if '"traceEvents"' in line:
-                break
-        else:
-            raise ValueError(f"traceEvents not found: {path}")
-        event_lines: list[str] = []
-        for line in source:
-            if not event_lines:
-                if line.startswith("  {"):
-                    event_lines.append(line)
-                elif line.lstrip().startswith("]"):
-                    return
+        decoder = json.JSONDecoder()
+        key = '"traceEvents"'
+        buffer = ""
+        position = 0
+        array_started = False
+        eof = False
+        need_more = True
+
+        while True:
+            if need_more and not eof:
+                chunk = source.read(TRACE_READ_CHUNK_SIZE)
+                if chunk:
+                    buffer += chunk
+                else:
+                    eof = True
+            need_more = False
+
+            if not array_started:
+                key_index = buffer.find(key, position)
+                if key_index < 0:
+                    if eof:
+                        raise ValueError(f"traceEvents not found: {path}")
+                    buffer = buffer[-(len(key) - 1) :]
+                    position = 0
+                    need_more = True
+                    continue
+                colon_index = buffer.find(":", key_index + len(key))
+                if colon_index < 0:
+                    if eof:
+                        raise ValueError(f"invalid traceEvents field: {path}")
+                    buffer = buffer[key_index:]
+                    position = 0
+                    need_more = True
+                    continue
+                array_index = buffer.find("[", colon_index + 1)
+                if array_index < 0:
+                    if eof:
+                        raise ValueError(f"traceEvents is not an array: {path}")
+                    buffer = buffer[key_index:]
+                    position = 0
+                    need_more = True
+                    continue
+                position = array_index + 1
+                array_started = True
+
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position < len(buffer) and buffer[position] == "]":
+                return
+            if position < len(buffer) and buffer[position] == ",":
+                position += 1
                 continue
-            event_lines.append(line)
-            if line.startswith("  }"):
-                encoded = "".join(event_lines).rstrip().removesuffix(",")
-                yield json.loads(encoded)
-                event_lines.clear()
+            if position >= len(buffer):
+                if eof:
+                    raise ValueError(f"unterminated traceEvents array: {path}")
+                buffer = ""
+                position = 0
+                need_more = True
+                continue
+
+            try:
+                event, end_index = decoder.raw_decode(buffer, position)
+            except json.JSONDecodeError as error:
+                if eof:
+                    raise ValueError(f"invalid traceEvents entry: {path}") from error
+                buffer = buffer[position:]
+                position = 0
+                need_more = True
+                continue
+            if not isinstance(event, dict):
+                raise ValueError(f"traceEvents entry is not an object: {path}")
+            yield event
+            position = end_index
+            if position >= TRACE_READ_CHUNK_SIZE:
+                buffer = buffer[position:]
+                position = 0
 
 
 def trace_files(path: Path) -> list[Path]:
@@ -278,6 +332,9 @@ def collect_runtime(
             kernel_status_ns[name][status] += event_ns
             kernel_variant_count[name][link_key] += 1
             kernel_variant_ns[name][link_key] += event_ns
+
+    if not kernel_count:
+        raise ValueError(f"no kernel events found in rank-{rank} runtime traces")
 
     kernel_total_ns = category_ns["kernel"]
     ordered_names = sorted(kernel_count, key=lambda name: (-kernel_ns[name], name))

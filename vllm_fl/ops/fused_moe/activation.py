@@ -37,10 +37,9 @@ def apply_moe_activation(
         output.copy_(_gelu_and_mul(None, input))
     elif activation == MoEActivation.SWIGLUOAI:
         torch.ops._C.swigluoai_and_mul(output, input)
-    elif activation == MoEActivation.SWIGLUOAI_UNINTERLEAVE:
-        assert clamp_limit is not None, (
-            "SWIGLUOAI_UNINTERLEAVE requires clamp_limit"
-        )
+    elif activation == getattr(MoEActivation, "SWIGLUOAI_UNINTERLEAVE", None):
+        if clamp_limit is None:
+            raise ValueError("SWIGLUOAI_UNINTERLEAVE requires clamp_limit")
         # This kernel supports the packed [all gates; all ups] layout used by
         # MiniMax-M3 and preserves its configurable alpha/beta/limit math.
         from vllm.models.minimax_m3.amd.ops.swiglu_oai import swiglu_oai_split

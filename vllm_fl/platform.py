@@ -37,8 +37,6 @@ from vllm_fl.utils import (
     SPLITTING_OPS,
     DeviceInfo,
     get_device_control_env_var,
-    get_device_name,
-    get_device_type,
 )
 
 logger = init_logger(__name__)
@@ -95,8 +93,6 @@ class PlatformFL(Platform):
     _enum = PlatformEnum.OOT
     device_info = DeviceInfo()
     vendor_name = device_info.vendor_name
-    device_type = get_device_type(vendor_name)
-    device_name = get_device_name(vendor_name)
     # cuda_alike (nvidia/metax): device_name = vendor_name (not used in torch.device)
     # non-cuda_alike (iluvatar/ascend): device_name = device_type (used in torch.device)
     device_name = device_info.vendor_name if (

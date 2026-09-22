@@ -124,4 +124,7 @@ python3 tools/operator_profile/generate_flagos_coverage.py \
 The current policy counts every observed Triton operation in the numerator.
 Other operations require auditable FlagGems evidence. Communication remains in
 the denominator and requires FlagCX evidence to enter the numerator. Coverage
-is based on operator kinds and is not weighted by calls or execution time.
+is based on operator kinds and is not weighted by calls or execution time. A
+non-communication operator with `void` in any baseline kernel name is always
+reported as uncovered. The report writes Boolean `flagos_covered` values and a
+`flagos_type` classification before the `kernel_name` column.

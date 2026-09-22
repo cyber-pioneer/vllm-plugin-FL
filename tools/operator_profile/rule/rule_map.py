@@ -40,6 +40,10 @@ _STAGED_KERNEL = re.compile(
     r"^(?P<family>.+?)(?:_stage|::stage)_?\d+(?:_[A-Za-z0-9]+)*$",
     re.IGNORECASE,
 )
+_MOE_ALIGN_STAGE_KERNEL = re.compile(
+    r"^moe_align_block_size_stage_?\d+(?:_[A-Za-z0-9]+)*$",
+    re.IGNORECASE,
+)
 
 
 def _combined_name(operator_name: str, kernel_name: str) -> str:
@@ -106,6 +110,8 @@ def kernel_callable_identity_name(kernel_name: str) -> str:
 def staged_kernel_family_name(kernel_name: str) -> str | None:
     """Return the common callable for a numbered multi-stage kernel family."""
     callable_name = kernel_callable_identity_name(kernel_name)
+    if _MOE_ALIGN_STAGE_KERNEL.fullmatch(callable_name):
+        return None
     match = _STAGED_KERNEL.fullmatch(callable_name)
     return match.group("family") if match else None
 
@@ -127,6 +133,18 @@ def operator_descriptor(
 ) -> tuple[str, str, OperatorIdentity]:
     """Map an operator/kernel pair without model- or kernel-specific tables."""
     callable_name = kernel_callable_identity_name(kernel_name)
+    if callable_name.startswith("nvjet_tst_"):
+        return (
+            "aten::mm",
+            "aten",
+            ("operator", "aten", "aten::mm"),
+        )
+    if _MOE_ALIGN_STAGE_KERNEL.fullmatch(callable_name):
+        return (
+            callable_name,
+            "custom",
+            ("moe_align_block_size_stage", callable_name),
+        )
     if is_fused_communication_compute(source_operator, kernel_name):
         return (
             source_operator,

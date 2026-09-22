@@ -18,6 +18,7 @@ SOURCE_TEXT = (
     "Explain the design, verify assumptions, compare alternatives, and provide "
     "a precise implementation with deterministic validation steps. "
 )
+HTTP_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def post_json(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
@@ -28,7 +29,7 @@ def post_json(url: str, body: dict[str, Any], timeout: float) -> dict[str, Any]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with HTTP_OPENER.open(request, timeout=timeout) as response:
             return json.load(response)
     except urllib.error.HTTPError as error:
         detail = error.read().decode("utf-8", errors="replace")
@@ -120,6 +121,12 @@ def main() -> None:
     concurrency = args.concurrency
     input_tokens = args.input_tokens
     output_tokens = args.output_tokens
+    if concurrency <= 0:
+        raise ValueError("concurrency must be greater than zero")
+    if input_tokens <= 0:
+        raise ValueError("input-tokens must be greater than zero")
+    if output_tokens <= 0:
+        raise ValueError("output-tokens must be greater than zero")
     if args.prompt_input:
         prompt_tokens = json.loads(args.prompt_input.read_text(encoding="utf-8"))
     else:

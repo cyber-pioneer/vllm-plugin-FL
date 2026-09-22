@@ -13,7 +13,7 @@ shift 3
 
 PROFILE_DIR="$RUN_DIR/profile"
 mkdir -p "$PROFILE_DIR"
-if find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.pt.trace.json*' -print -quit |
+if find "$PROFILE_DIR" -type f -name '*.pt.trace.json*' -print -quit |
   grep -q .; then
   echo "profile directory already contains a trace: $PROFILE_DIR" >&2
   exit 1

@@ -1,4 +1,8 @@
 from tools.operator_profile.extract_operator_shapes import format_operator_time_percent
+from tools.operator_profile.rule.rule_coverage import (
+    FlagOSEvidence,
+    classify_coverage,
+)
 from tools.operator_profile.rule.rule_map import (
     kernel_callable_identity_name,
     operator_descriptor,
@@ -26,6 +30,39 @@ def test_triton_kernel_is_classified_without_an_operator_mapping():
     assert name == "null"
     assert kind == "triton_compiled"
     assert identity == ("compile_kernel", kernel)
+
+
+def test_nvjet_kernels_share_the_aten_mm_operator():
+    attributed = operator_descriptor("aten::mm", "nvjet_tst_128x64_TNT")
+    unattributed = operator_descriptor("null", "nvjet_tst_64x8_TNN")
+
+    assert attributed == (
+        "aten::mm",
+        "aten",
+        ("operator", "aten", "aten::mm"),
+    )
+    assert unattributed == attributed
+
+
+def test_moe_align_stages_are_distinct_custom_operators():
+    first = operator_descriptor(
+        "vllm::moe_forward_shared", "moe_align_block_size_stage1"
+    )
+    second = operator_descriptor("null", "moe_align_block_size_stage2_vec")
+
+    assert first == (
+        "moe_align_block_size_stage1",
+        "custom",
+        ("moe_align_block_size_stage", "moe_align_block_size_stage1"),
+    )
+    assert second == (
+        "moe_align_block_size_stage2_vec",
+        "custom",
+        ("moe_align_block_size_stage", "moe_align_block_size_stage2_vec"),
+    )
+    assert first[2] != second[2]
+    assert staged_kernel_family_name("moe_align_block_size_stage1") is None
+    assert staged_kernel_family_name("moe_align_block_size_stage2_vec") is None
 
 
 def test_numbered_stages_share_a_generic_kernel_family():
@@ -62,3 +99,39 @@ def test_elementwise_broadcast_is_not_classified_as_communication():
     descriptor = operator_descriptor("aten::mul", "mul_broadcast_2d_kernel")
 
     assert descriptor[1] == "aten"
+
+
+def test_void_non_communication_kernel_is_not_flagos_covered():
+    evidence = FlagOSEvidence(
+        aten_apis=frozenset({"aten::add"}),
+        fused_apis=frozenset(),
+        lines=(),
+    )
+
+    decision = classify_coverage(
+        operator_names={"aten::add"},
+        operator_kinds={"aten"},
+        kernel_names={"void at::native::add_kernel(float*)"},
+        plugin_kernel_names={"add_func_kernel_rank_0"},
+        evidence=evidence,
+    )
+
+    assert decision.covered is False
+    assert decision.flagos_type == "none"
+    assert decision.evidence == "non-communication operator contains a void kernel name"
+
+
+def test_void_communication_kernel_uses_communication_policy():
+    decision = classify_coverage(
+        operator_names={"c10d::all_reduce"},
+        operator_kinds={"communication"},
+        kernel_names={"void nccl::all_reduce_kernel(float*)"},
+        plugin_kernel_names=set(),
+        evidence=FlagOSEvidence(frozenset(), frozenset(), ()),
+    )
+
+    assert decision.covered is False
+    assert decision.flagos_type == "none"
+    assert decision.evidence == (
+        "communication is in the denominator; no FlagCX evidence"
+    )

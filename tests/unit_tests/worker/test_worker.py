@@ -31,6 +31,46 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def test_kernel_warmup_patch_is_restored(monkeypatch):
+    import vllm_fl.worker.worker as worker_module
+
+    original = object()
+    serialized = object()
+    warmup_module = SimpleNamespace(deep_gemm_warmup=original)
+    observed = []
+
+    def kernel_warmup(worker):
+        observed.append(warmup_module.deep_gemm_warmup)
+
+    monkeypatch.setattr(worker_module, "kernel_warmup_module", warmup_module)
+    monkeypatch.setattr(worker_module, "_serialized_deep_gemm_warmup", serialized)
+    monkeypatch.setattr(worker_module, "kernel_warmup", kernel_warmup)
+
+    worker_module._run_kernel_warmup(object())
+
+    assert observed == [serialized]
+    assert warmup_module.deep_gemm_warmup is original
+
+
+def test_kernel_warmup_import_error_is_optional(monkeypatch):
+    import vllm_fl.worker.worker as worker_module
+
+    original = object()
+    serialized = object()
+    warmup_module = SimpleNamespace(deep_gemm_warmup=original)
+
+    def kernel_warmup(worker):
+        raise ImportError("optional dependency is unavailable")
+
+    monkeypatch.setattr(worker_module, "kernel_warmup_module", warmup_module)
+    monkeypatch.setattr(worker_module, "_serialized_deep_gemm_warmup", serialized)
+    monkeypatch.setattr(worker_module, "kernel_warmup", kernel_warmup)
+
+    worker_module._run_kernel_warmup(object())
+
+    assert warmup_module.deep_gemm_warmup is original
+
+
 @pytest.mark.parametrize("world_size", [2, 4])
 def test_musa_workers_bind_config_before_patching_and_loading(monkeypatch, world_size):
     pytest.importorskip("torch_musa")

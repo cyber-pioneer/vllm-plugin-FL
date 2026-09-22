@@ -4,6 +4,7 @@
 Tests for activation ops.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -35,3 +36,28 @@ class TestSiluAndMulFL:
 
         mock_cached_op.assert_called_once_with(layer, x)
         assert result.shape == (2, 4)
+
+
+def test_fused_moe_activation_tolerates_missing_optional_enum(monkeypatch):
+    import vllm_fl.ops.fused_moe.activation as activation_module
+
+    enum_without_uninterleave = SimpleNamespace(
+        SILU=object(),
+        GELU=object(),
+        SWIGLUOAI=object(),
+        SWIGLUSTEP=object(),
+        SILU_NO_MUL=object(),
+        GELU_NO_MUL=object(),
+        RELU2_NO_MUL=object(),
+    )
+    unknown_activation = SimpleNamespace(is_gated=False, value="unknown")
+    input_tensor = torch.randn(2, 4)
+    output_tensor = torch.empty_like(input_tensor)
+    monkeypatch.setattr(activation_module, "MoEActivation", enum_without_uninterleave)
+
+    with pytest.raises(ValueError, match="Unsupported FusedMoe activation"):
+        activation_module.apply_moe_activation(
+            unknown_activation,
+            output_tensor,
+            input_tensor,
+        )

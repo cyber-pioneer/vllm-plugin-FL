@@ -39,7 +39,7 @@ FLAGGEMS_KERNEL_PREFIX_RULES = {
 @dataclass(frozen=True)
 class CoverageDecision:
     covered: bool
-    category: str
+    flagos_type: str
     evidence: str
 
 
@@ -96,6 +96,13 @@ def classify_coverage(
     numerator. Other operators require runtime evidence. Communication is not
     covered unless a future FlagCX evidence rule is added here.
     """
+    has_void_kernel = any("void" in name for name in kernel_names)
+    if has_void_kernel and "communication" not in operator_kinds:
+        return CoverageDecision(
+            False,
+            "none",
+            "non-communication operator contains a void kernel name",
+        )
     if is_triton_operator(operator_names, operator_kinds, kernel_names):
         return CoverageDecision(
             True,

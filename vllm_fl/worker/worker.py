@@ -4,7 +4,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-import fcntl
 import gc
 import os
 from contextlib import nullcontext, contextmanager
@@ -33,36 +32,44 @@ from vllm.distributed.kv_transfer import (
     has_kv_transfer_group,
 )
 
+kernel_warmup_module = None
 _serialized_deep_gemm_warmup = None
 try:
     import vllm.model_executor.warmup.kernel_warmup as kernel_warmup_module
 
-    _deep_gemm_warmup = kernel_warmup_module.deep_gemm_warmup
-
-    def _serialized_deep_gemm_warmup(*args, **kwargs):
-        lock_path = os.environ.get(
-            "VLLM_FL_DEEP_GEMM_WARMUP_LOCK_FILE",
-            "/tmp/vllm-fl-deep-gemm-warmup.lock",
-        )
-        with open(lock_path, "a+") as lock_file:
-            logger.info("Waiting for the DeepGEMM warmup lock")
-            fcntl.flock(lock_file, fcntl.LOCK_EX)
-            try:
-                logger.info("Running DeepGEMM warmup with the lock held")
-                return _deep_gemm_warmup(*args, **kwargs)
-            finally:
-                fcntl.flock(lock_file, fcntl.LOCK_UN)
-
     kernel_warmup = kernel_warmup_module.kernel_warmup
-except ImportError:
+    _deep_gemm_warmup = getattr(kernel_warmup_module, "deep_gemm_warmup", None)
+
+    if _deep_gemm_warmup is not None:
+
+        def _serialized_deep_gemm_warmup(*args, **kwargs):
+            import fcntl
+
+            lock_path = os.environ.get(
+                "VLLM_FL_DEEP_GEMM_WARMUP_LOCK_FILE",
+                "/tmp/vllm-fl-deep-gemm-warmup.lock",
+            )
+            with open(lock_path, "a+") as lock_file:
+                logger.info("Waiting for the DeepGEMM warmup lock")
+                fcntl.flock(lock_file, fcntl.LOCK_EX)
+                try:
+                    logger.info("Running DeepGEMM warmup with the lock held")
+                    return _deep_gemm_warmup(*args, **kwargs)
+                finally:
+                    fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+except (ImportError, OSError, AttributeError) as warmup_import_error:
     # deep_gemm may be broken in some environments; provide a fallback
     import logging as _logging
+
     _logging.getLogger(__name__).warning(
-        "kernel_warmup import failed (likely deep_gemm issue), "
-        "using no-op kernel_warmup"
+        "kernel_warmup import failed (%r), using no-op kernel_warmup",
+        warmup_import_error,
     )
+
     def kernel_warmup(worker):
         pass
+
 from vllm.distributed.parallel_state import (
     get_pcp_group,
     get_pp_group,
@@ -93,6 +100,26 @@ from vllm_fl.dispatch.io_common import managed_inference_mode
 from vllm_fl.utils import get_flag_gems_whitelist_blacklist
 
 logger = init_logger(__name__)
+
+
+def _run_kernel_warmup(worker) -> None:
+    original_deep_gemm_warmup = None
+    if (
+        kernel_warmup_module is not None
+        and _serialized_deep_gemm_warmup is not None
+    ):
+        original_deep_gemm_warmup = getattr(
+            kernel_warmup_module, "deep_gemm_warmup", None
+        )
+        kernel_warmup_module.deep_gemm_warmup = _serialized_deep_gemm_warmup
+    try:
+        kernel_warmup(worker)
+    except ImportError as error:
+        logger.warning("Skipping optional kernel warmup: %r", error)
+    finally:
+        if original_deep_gemm_warmup is not None:
+            kernel_warmup_module.deep_gemm_warmup = original_deep_gemm_warmup
+
 
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
@@ -799,11 +826,7 @@ class WorkerFL(WorkerBase):
                 ),
             )
         else:
-            if _serialized_deep_gemm_warmup is not None:
-                kernel_warmup.__globals__["deep_gemm_warmup"] = (
-                    _serialized_deep_gemm_warmup
-                )
-            kernel_warmup(self)
+            _run_kernel_warmup(self)
 
         cuda_graph_memory_bytes = 0
         if self.vllm_config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
