@@ -25,16 +25,6 @@ FLAGGEMS_FUSED_API_RULES = {
     "flag_gems.fused.topk_softmax.": frozenset({"_moe_C::topk_softmax"}),
 }
 
-# Kernels with an implementation source owned by FlagGems. These rules cover
-# lower-level ATen APIs that may not have their own enable-log entry because a
-# higher-level FlagGems API launched them.
-FLAGGEMS_KERNEL_PREFIX_RULES = {
-    "aten::argmax": ("argmax_kernel_inner",),
-    "aten::fill_": ("fill_scalar_kernel",),
-    "aten::masked_fill_": ("masked_fill_kernel",),
-    "aten::mm": ("mm_kernel_general_host_tma",),
-}
-
 
 @dataclass(frozen=True)
 class CoverageDecision:
@@ -61,12 +51,13 @@ def read_flagos_evidence(path: Path | None) -> FlagOSEvidence:
     )
     aten_apis: set[str] = set()
     for line in lines:
-        match = re.search(r"flag_gems\.ops\.([^.]+)\.", line)
+        match = re.search(r"flag_gems\.ops\.([^.]+)\.([A-Za-z0-9_]+)", line)
         if not match:
             continue
-        module_name = match.group(1)
-        api_name = FLAGGEMS_ATEN_ALIASES.get(module_name, module_name)
-        aten_apis.add(f"aten::{api_name}")
+        module_name, callable_name = match.groups()
+        for api_name in (module_name, callable_name):
+            api_name = FLAGGEMS_ATEN_ALIASES.get(api_name, api_name)
+            aten_apis.add(f"aten::{api_name}")
 
     fused_apis: set[str] = set()
     for token, api_names in FLAGGEMS_FUSED_API_RULES.items():
@@ -87,7 +78,6 @@ def classify_coverage(
     operator_names: set[str],
     operator_kinds: set[str],
     kernel_names: set[str],
-    plugin_kernel_names: set[str],
     evidence: FlagOSEvidence,
 ) -> CoverageDecision:
     """Classify one normalized baseline operator.
@@ -96,13 +86,6 @@ def classify_coverage(
     numerator. Other operators require runtime evidence. Communication is not
     covered unless a future FlagCX evidence rule is added here.
     """
-    has_void_kernel = any("void" in name for name in kernel_names)
-    if has_void_kernel and "communication" not in operator_kinds:
-        return CoverageDecision(
-            False,
-            "none",
-            "non-communication operator contains a void kernel name",
-        )
     if is_triton_operator(operator_names, operator_kinds, kernel_names):
         return CoverageDecision(
             True,
@@ -110,38 +93,11 @@ def classify_coverage(
             "policy: all observed Triton operators count as FlagOS coverage",
         )
     matched_aten = sorted(operator_names & set(evidence.aten_apis))
-    non_native_plugin_kernels = sorted(
-        kernel_name
-        for kernel_name in plugin_kernel_names
-        if not kernel_name.startswith(
-            (
-                "void at::",
-                "void gemv",
-                "nvjet_tst_",
-            )
-        )
-    )
-    if matched_aten and non_native_plugin_kernels:
+    if matched_aten:
         return CoverageDecision(
             True,
             "flaggems",
-            "flaggems_enable_oplist and non-native plugin kernel: "
-            + ",".join(matched_aten),
-        )
-    matched_kernel_rules = sorted(
-        operator_name
-        for operator_name in operator_names
-        if any(
-            kernel_name.startswith(prefix)
-            for prefix in FLAGGEMS_KERNEL_PREFIX_RULES.get(operator_name, ())
-            for kernel_name in plugin_kernel_names
-        )
-    )
-    if matched_kernel_rules:
-        return CoverageDecision(
-            True,
-            "flaggems",
-            "known FlagGems kernel implementation: " + ",".join(matched_kernel_rules),
+            "flaggems_enable_oplist: " + ",".join(matched_aten),
         )
     matched_fused = sorted(operator_names & set(evidence.fused_apis))
     if matched_fused:

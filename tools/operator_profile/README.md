@@ -96,7 +96,9 @@ then parses rank 0. An output directory containing an existing trace is rejected
 ## Output files
 
 - `operator_list.csv`: normalized operator inventory, stable operator IDs, and
-  each row's share of total rank-0 runtime kernel time. `1.23` means `1.23%`;
+  each row's share of total rank-0 runtime kernel time. Attributed and
+  unattributed events for the same operator ID and kernel are merged, preferring
+  the attributed operator name. `1.23` means `1.23%`;
   the column header carries the `%` unit, and values below `0.01%` are written
   as `<0.01`.
 - `kernel_time.csv`: kernel call counts, durations, and runtime time shares.
@@ -122,9 +124,10 @@ python3 tools/operator_profile/generate_flagos_coverage.py \
 ```
 
 The current policy counts every observed Triton operation in the numerator.
-Other operations require auditable FlagGems evidence. Communication remains in
-the denominator and requires FlagCX evidence to enter the numerator. Coverage
-is based on operator kinds and is not weighted by calls or execution time. A
-non-communication operator with `void` in any baseline kernel name is always
-reported as uncovered. The report writes Boolean `flagos_covered` values and a
-`flagos_type` classification before the `kernel_name` column.
+Other operations require auditable FlagGems evidence. An ATen API is covered
+when the current plugin run's enable-op list contains that API; kernel names are
+not used as secondary ATen replacement evidence. Communication remains in the
+denominator and requires FlagCX evidence to enter the numerator. Coverage is
+based on operator kinds and is not weighted by calls or execution time. The
+report writes Boolean `flagos_covered` values and a `flagos_type`
+classification before the `kernel_name` column.

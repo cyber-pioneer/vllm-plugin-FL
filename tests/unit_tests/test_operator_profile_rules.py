@@ -1,4 +1,7 @@
-from tools.operator_profile.extract_operator_shapes import format_operator_time_percent
+from tools.operator_profile.extract_operator_shapes import (
+    format_operator_time_percent,
+    operator_list_rows,
+)
 from tools.operator_profile.rule.rule_coverage import (
     FlagOSEvidence,
     classify_coverage,
@@ -30,6 +33,34 @@ def test_triton_kernel_is_classified_without_an_operator_mapping():
     assert name == "null"
     assert kind == "triton_compiled"
     assert identity == ("compile_kernel", kernel)
+
+
+def test_operator_list_merges_attributed_and_unattributed_kernel_rows():
+    kernel = "void extension::kernel<float>(float*)"
+    rows = operator_list_rows(
+        [
+            {
+                "operator_name": "extension::operator",
+                "kernel_name": kernel,
+                "kernel_time_us": 2.0,
+            },
+            {
+                "operator_name": "null",
+                "kernel_name": kernel,
+                "kernel_time_us": 3.0,
+            },
+        ]
+    )
+
+    assert rows == [
+        {
+            "operator_id": 1,
+            "operator_name": "extension::operator",
+            "operator_kind": "custom",
+            "kernel_name": kernel,
+            "kernel_time_percent(%)": "100.00",
+        }
+    ]
 
 
 def test_nvjet_kernels_share_the_aten_mm_operator():
@@ -101,7 +132,7 @@ def test_elementwise_broadcast_is_not_classified_as_communication():
     assert descriptor[1] == "aten"
 
 
-def test_void_non_communication_kernel_is_not_flagos_covered():
+def test_aten_coverage_uses_flaggems_enable_oplist():
     evidence = FlagOSEvidence(
         aten_apis=frozenset({"aten::add"}),
         fused_apis=frozenset(),
@@ -112,13 +143,12 @@ def test_void_non_communication_kernel_is_not_flagos_covered():
         operator_names={"aten::add"},
         operator_kinds={"aten"},
         kernel_names={"void at::native::add_kernel(float*)"},
-        plugin_kernel_names={"add_func_kernel_rank_0"},
         evidence=evidence,
     )
 
-    assert decision.covered is False
-    assert decision.flagos_type == "none"
-    assert decision.evidence == "non-communication operator contains a void kernel name"
+    assert decision.covered is True
+    assert decision.flagos_type == "flaggems"
+    assert decision.evidence.startswith("flaggems_enable_oplist")
 
 
 def test_void_communication_kernel_uses_communication_policy():
@@ -126,7 +156,6 @@ def test_void_communication_kernel_uses_communication_policy():
         operator_names={"c10d::all_reduce"},
         operator_kinds={"communication"},
         kernel_names={"void nccl::all_reduce_kernel(float*)"},
-        plugin_kernel_names=set(),
         evidence=FlagOSEvidence(frozenset(), frozenset(), ()),
     )
 

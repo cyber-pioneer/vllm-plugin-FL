@@ -74,14 +74,10 @@ def main() -> None:
         matching_plugin_ids = set()
         for operator_name in values["operator_names"]:
             matching_plugin_ids.update(plugin_by_name.get(operator_name, set()))
-        plugin_kernel_names: set[str] = set()
-        for plugin_operator_id in matching_plugin_ids:
-            plugin_kernel_names.update(plugin[plugin_operator_id]["kernel_names"])
         decision = classify_coverage(
             values["operator_names"],
             values["operator_kinds"],
             values["kernel_names"],
-            plugin_kernel_names,
             evidence,
         )
         rows.append(

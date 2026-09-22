@@ -525,23 +525,23 @@ def summary_csv_rows(
 
 
 def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    relations: dict[tuple[str, str, str], OperatorIdentity | None] = {}
-    relation_ns: Counter[tuple[str, str, str]] = Counter()
+    relations: dict[tuple[OperatorIdentity | None, str], set[tuple[str, str]]] = (
+        defaultdict(set)
+    )
+    relation_ns: Counter[tuple[OperatorIdentity | None, str]] = Counter()
     for summary_row in summary_rows:
         kernel_name = summary_row["kernel_name"]
         operator_name, operator_kind, identity = operator_descriptor(
             summary_row["operator_name"], kernel_name
         )
-        relation = (operator_name, operator_kind, kernel_name)
-        previous = relations.setdefault(relation, identity)
-        if previous != identity:
-            raise RuntimeError(f"conflicting operator identities for {relation}")
+        relation = (identity, kernel_name)
+        relations[relation].add((operator_name, operator_kind))
         relation_ns[relation] += csv_us_to_ns(str(summary_row["kernel_time_us"]))
 
     kernel_total_ns = sum(relation_ns.values())
 
     identities = sorted(
-        {identity for identity in relations.values() if identity is not None},
+        {identity for identity, _kernel_name in relations if identity is not None},
         key=lambda identity: (
             identity[:2] != ("operator", "aten"),
             identity[0] == "communication_kernel",
@@ -553,18 +553,23 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
         identity: index for index, identity in enumerate(identities, start=1)
     }
     rows: list[dict[str, Any]] = []
-    for relation, identity in sorted(
+    for relation, operator_descriptors in sorted(
         relations.items(),
         key=lambda item: (
-            item[1] is None,
-            operator_ids[item[1]] if item[1] is not None else 0,
-            item[0][0] == "null",
-            item[0][0],
-            item[0][2],
+            item[0][0] is None,
+            operator_ids[item[0][0]] if item[0][0] is not None else 0,
             item[0][1],
         ),
     ):
-        operator_name, operator_kind, kernel_name = relation
+        identity, kernel_name = relation
+        operator_name, operator_kind = min(
+            operator_descriptors,
+            key=lambda descriptor: (
+                descriptor[0] == "null",
+                descriptor[0],
+                descriptor[1],
+            ),
+        )
         rows.append(
             {
                 "operator_id": (
