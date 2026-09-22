@@ -24,6 +24,7 @@ COVERAGE_FIELDNAMES = [
 ]
 PERCENT_FIELDNAMES = [
     "covered_operator_count",
+    "undetermined_operator_count",
     "total_operator_count",
     "coverage_percent(%)",
 ]
@@ -115,6 +116,7 @@ def main() -> None:
         writer.writerows(rows)
 
     numerator = sum(row["flagos_covered"] == "true" for row in rows)
+    undetermined = sum(row["flagos_covered"] == "" for row in rows)
     denominator = len(rows)
     percent = numerator / denominator * 100 if denominator else 0.0
     percent_output = args.output.parent / "operator_flagos_coverage_percent.csv"
@@ -128,6 +130,7 @@ def main() -> None:
         writer.writerow(
             {
                 "covered_operator_count": numerator,
+                "undetermined_operator_count": undetermined,
                 "total_operator_count": denominator,
                 "coverage_percent(%)": f"{percent:.3f}",
             }
@@ -136,6 +139,7 @@ def main() -> None:
         json.dumps(
             {
                 "numerator": numerator,
+                "undetermined": undetermined,
                 "denominator": denominator,
                 "coverage_percent": round(percent, 3),
                 "output": str(args.output),
