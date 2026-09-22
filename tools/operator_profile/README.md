@@ -97,7 +97,8 @@ then parses rank 0. An output directory containing an existing trace is rejected
 
 - `operator_list.csv`: normalized operator inventory, stable operator IDs, and
   each row's share of total rank-0 runtime kernel time. `1.23` means `1.23%`;
-  values below `0.01%` are written as `<0.01%`.
+  the column header carries the `%` unit, and values below `0.01%` are written
+  as `<0.01`.
 - `kernel_time.csv`: kernel call counts, durations, and runtime time shares.
 - `kernel_shape_dtype.csv`: kernel/operator/shape/dtype mapping variants.
 - `summary.json`: trace scope, mapping coverage, and conservation checks.

@@ -107,7 +107,7 @@ def format_percent(value_ns: int, total_ns: int) -> str:
 def format_operator_time_percent(value_ns: int, total_ns: int) -> str:
     percent = Decimal(value_ns) * 100 / Decimal(total_ns) if total_ns else Decimal(0)
     if percent < Decimal("0.01"):
-        return "<0.01%"
+        return "<0.01"
     return format(
         percent.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP),
         "f",
@@ -516,7 +516,7 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
                 "operator_name": operator_name,
                 "operator_kind": operator_kind,
                 "kernel_name": kernel_name,
-                "kernel_time_percent": format_operator_time_percent(
+                "kernel_time_percent(%)": format_operator_time_percent(
                     relation_ns[relation], kernel_total_ns
                 ),
             }
@@ -809,7 +809,7 @@ def main() -> None:
             "operator_name",
             "operator_kind",
             "kernel_name",
-            "kernel_time_percent",
+            "kernel_time_percent(%)",
         ],
         operator_list_rows(summary_rows),
     )

@@ -8,8 +8,8 @@ from tools.operator_profile.rule.rule_map import (
 
 def test_operator_time_percent_uses_hundredth_percent_resolution():
     assert format_operator_time_percent(123, 10_000) == "1.23"
-    assert format_operator_time_percent(1, 100_000) == "<0.01%"
-    assert format_operator_time_percent(1, 0) == "<0.01%"
+    assert format_operator_time_percent(1, 100_000) == "<0.01"
+    assert format_operator_time_percent(1, 0) == "<0.01"
 
 
 def test_kernel_callable_identity_ignores_launch_specialization():
