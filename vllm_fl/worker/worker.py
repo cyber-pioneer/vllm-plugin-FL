@@ -31,70 +31,17 @@ from vllm.distributed.kv_transfer import (
     get_kv_transfer_group,
     has_kv_transfer_group,
 )
-
-kernel_warmup_module = None
-_serialized_deep_gemm_warmup = None
 try:
-    import vllm.model_executor.warmup.kernel_warmup as kernel_warmup_module
-
-    kernel_warmup = kernel_warmup_module.kernel_warmup
-    _deep_gemm_warmup = getattr(kernel_warmup_module, "deep_gemm_warmup", None)
-
-    if _deep_gemm_warmup is not None:
-
-        def _serialized_deep_gemm_warmup(*args, **kwargs):
-            import fcntl
-
-            lock_path = os.environ.get(
-                "VLLM_FL_DEEP_GEMM_WARMUP_LOCK_FILE",
-                "/tmp/vllm-fl-deep-gemm-warmup.lock",
-            )
-            lock_file = None
-            try:
-                lock_file = open(lock_path, "a+")
-                logger.info("Waiting for the DeepGEMM warmup lock")
-                fcntl.flock(lock_file, fcntl.LOCK_EX)
-            except OSError as error:
-                if lock_file is not None:
-                    lock_file.close()
-                logger.warning(
-                    "DeepGEMM warmup lock unavailable (%r); running unlocked",
-                    error,
-                )
-                result = _deep_gemm_warmup(*args, **kwargs)
-            else:
-                try:
-                    logger.info("Running DeepGEMM warmup with the lock held")
-                    result = _deep_gemm_warmup(*args, **kwargs)
-                finally:
-                    try:
-                        fcntl.flock(lock_file, fcntl.LOCK_UN)
-                    except OSError as error:
-                        logger.warning(
-                            "Failed to release the DeepGEMM warmup lock: %r",
-                            error,
-                        )
-                    try:
-                        lock_file.close()
-                    except OSError as error:
-                        logger.warning(
-                            "Failed to close the DeepGEMM warmup lock: %r",
-                            error,
-                        )
-            return result
-
-except (ImportError, OSError, AttributeError) as warmup_import_error:
+    from vllm.model_executor.warmup.kernel_warmup import kernel_warmup
+except ImportError:
     # deep_gemm may be broken in some environments; provide a fallback
     import logging as _logging
-
     _logging.getLogger(__name__).warning(
-        "kernel_warmup import failed (%r), using no-op kernel_warmup",
-        warmup_import_error,
+        "kernel_warmup import failed (likely deep_gemm issue), "
+        "using no-op kernel_warmup"
     )
-
     def kernel_warmup(worker):
         pass
-
 from vllm.distributed.parallel_state import (
     get_pcp_group,
     get_pp_group,
@@ -125,26 +72,6 @@ from vllm_fl.dispatch.io_common import managed_inference_mode
 from vllm_fl.utils import get_flag_gems_whitelist_blacklist
 
 logger = init_logger(__name__)
-
-
-def _run_kernel_warmup(worker) -> None:
-    original_deep_gemm_warmup = None
-    if (
-        kernel_warmup_module is not None
-        and _serialized_deep_gemm_warmup is not None
-    ):
-        original_deep_gemm_warmup = getattr(
-            kernel_warmup_module, "deep_gemm_warmup", None
-        )
-        kernel_warmup_module.deep_gemm_warmup = _serialized_deep_gemm_warmup
-    try:
-        kernel_warmup(worker)
-    except ImportError as error:
-        logger.warning("Skipping optional kernel warmup: %r", error)
-    finally:
-        if original_deep_gemm_warmup is not None:
-            kernel_warmup_module.deep_gemm_warmup = original_deep_gemm_warmup
-
 
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
@@ -556,9 +483,9 @@ class WorkerFL(WorkerBase):
         num_ubatches = 2 if self.vllm_config.parallel_config.enable_dbo else 1
         init_workspace_manager(self.device, num_ubatches)
 
-        # Construct the model runner
         from vllm_fl.worker.model_runner import ModelRunnerFL
 
+        # Construct the model runner
         self.model_runner = ModelRunnerFL(self.vllm_config, self.device)
 
         if self.rank == 0:
@@ -851,7 +778,15 @@ class WorkerFL(WorkerBase):
                 ),
             )
         else:
-            _run_kernel_warmup(self)
+            try:
+                kernel_warmup(self)
+            except ImportError as e:
+                # vllm 0.24.0's kernel_warmup unconditionally imports
+                # minimax_m3_msa_warmup, whose chain reaches torchvision.
+                # torchvision is not installed on OOT runtimes (installing it
+                # would overwrite the vendor-matched torch matrix); the warmup
+                # is a no-op for any model other than MiniMaxM3, so skip it.
+                logger.warning("kernel_warmup skipped: %s", e)
 
         cuda_graph_memory_bytes = 0
         if self.vllm_config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
