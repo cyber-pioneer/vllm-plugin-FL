@@ -164,3 +164,29 @@ def test_void_communication_kernel_uses_communication_policy():
     assert decision.evidence == (
         "communication is in the denominator; no FlagCX evidence"
     )
+
+
+def test_aten_without_enable_op_evidence_is_not_covered():
+    decision = classify_coverage(
+        operator_names={"aten::sum"},
+        operator_kinds={"aten"},
+        kernel_names={"sum_kernel"},
+        evidence=FlagOSEvidence(frozenset(), frozenset(), ()),
+    )
+
+    assert decision.covered is False
+    assert decision.flagos_type == "none"
+    assert decision.evidence == "ATen API is absent from flaggems_enable_oplist"
+
+
+def test_operator_without_decisive_evidence_has_empty_coverage_fields():
+    decision = classify_coverage(
+        operator_names={"extension::operator"},
+        operator_kinds={"custom"},
+        kernel_names={"extension_kernel"},
+        evidence=FlagOSEvidence(frozenset(), frozenset(), ()),
+    )
+
+    assert decision.covered is None
+    assert decision.flagos_type == ""
+    assert decision.evidence == "insufficient evidence to determine FlagOS coverage"

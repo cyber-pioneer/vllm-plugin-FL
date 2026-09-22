@@ -123,6 +123,12 @@ python3 tools/operator_profile/generate_flagos_coverage.py \
   --output /workspace/op_profile/qwen_flagos_coverage/operator_flagos_coverage.csv
 ```
 
+The command also writes `operator_flagos_coverage_percent.csv` beside the
+detailed report. It contains `covered_operator_count`, `total_operator_count`,
+and `coverage_percent(%)` in one row. Operators without enough evidence to make
+a coverage decision have empty `flagos_covered` and `flagos_type` fields; they
+remain in the total operator count.
+
 The current policy counts every observed Triton operation in the numerator.
 Other operations require auditable FlagGems evidence. An ATen API is covered
 when the current plugin run's enable-op list contains that API; kernel names are

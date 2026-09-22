@@ -22,6 +22,11 @@ COVERAGE_FIELDNAMES = [
     "plugin_operator_id",
     "evidence",
 ]
+PERCENT_FIELDNAMES = [
+    "covered_operator_count",
+    "total_operator_count",
+    "coverage_percent(%)",
+]
 
 
 def read_rows(path: Path) -> list[dict[str, str]]:
@@ -85,7 +90,13 @@ def main() -> None:
                 "operator_id": operator_id,
                 "operator_name": encoded(values["operator_names"]),
                 "operator_kind": encoded(values["operator_kinds"]),
-                "flagos_covered": "true" if decision.covered else "false",
+                "flagos_covered": (
+                    "true"
+                    if decision.covered is True
+                    else "false"
+                    if decision.covered is False
+                    else ""
+                ),
                 "flagos_type": decision.flagos_type,
                 "kernel_name": encoded(values["kernel_names"]),
                 "plugin_operator_id": json.dumps(sorted(matching_plugin_ids)),
@@ -95,13 +106,32 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8", newline="") as target:
-        writer = csv.DictWriter(target, fieldnames=COVERAGE_FIELDNAMES)
+        writer = csv.DictWriter(
+            target,
+            fieldnames=COVERAGE_FIELDNAMES,
+            lineterminator="\n",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
     numerator = sum(row["flagos_covered"] == "true" for row in rows)
     denominator = len(rows)
     percent = numerator / denominator * 100 if denominator else 0.0
+    percent_output = args.output.parent / "operator_flagos_coverage_percent.csv"
+    with percent_output.open("w", encoding="utf-8", newline="") as target:
+        writer = csv.DictWriter(
+            target,
+            fieldnames=PERCENT_FIELDNAMES,
+            lineterminator="\n",
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "covered_operator_count": numerator,
+                "total_operator_count": denominator,
+                "coverage_percent(%)": f"{percent:.3f}",
+            }
+        )
     print(
         json.dumps(
             {
@@ -109,6 +139,7 @@ def main() -> None:
                 "denominator": denominator,
                 "coverage_percent": round(percent, 3),
                 "output": str(args.output),
+                "percent_output": str(percent_output),
             },
             sort_keys=True,
         )

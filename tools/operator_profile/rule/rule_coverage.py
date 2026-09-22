@@ -28,7 +28,7 @@ FLAGGEMS_FUSED_API_RULES = {
 
 @dataclass(frozen=True)
 class CoverageDecision:
-    covered: bool
+    covered: bool | None
     flagos_type: str
     evidence: str
 
@@ -106,10 +106,20 @@ def classify_coverage(
             "flaggems",
             "flaggems fused mapping: " + ",".join(matched_fused),
         )
+    if "aten" in operator_kinds:
+        return CoverageDecision(
+            False,
+            "none",
+            "ATen API is absent from flaggems_enable_oplist",
+        )
     if "communication" in operator_kinds:
         return CoverageDecision(
             False,
             "none",
             "communication is in the denominator; no FlagCX evidence",
         )
-    return CoverageDecision(False, "none", "no auditable FlagOS evidence")
+    return CoverageDecision(
+        None,
+        "",
+        "insufficient evidence to determine FlagOS coverage",
+    )
