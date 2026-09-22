@@ -66,7 +66,7 @@ python3 "$TOOL_DIR/run_concurrent_requests.py" \
   --base-url "$BASE_URL" \
   --prompt-input "$RUN_DIR/prompt_token_ids.json" \
   --metrics "$RUN_DIR/profiled_metrics.json"
-stop_profile
+stop_profile 0
 
 python3 "$TOOL_DIR/extract_operator_shapes.py" \
   --runtime "$PROFILE_DIR" \
