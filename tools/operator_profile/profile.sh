@@ -13,6 +13,7 @@ RESULT_DIR="$RUN_DIR/results"
 TOOL_DIR=$(cd "$(dirname "$0")" && pwd)
 BASE_URL=${PROFILE_BASE_URL:-http://localhost:8000}
 HEALTH_TIMEOUT=${PROFILE_HEALTH_TIMEOUT_SECONDS:-3600}
+FLAGGEMS_OPLIST=${FLAGGEMS_ENABLE_OPLIST_PATH:-/tmp/flaggems_enable_oplist.txt}
 
 if [[ ! -d "$PROFILE_DIR" ]]; then
   echo "profile directory does not exist: $PROFILE_DIR" >&2
@@ -73,6 +74,6 @@ python3 "$TOOL_DIR/extract_operator_shapes.py" \
   --rank 0 \
   --output-dir "$RESULT_DIR"
 
-if [[ -f /tmp/flaggems_enable_oplist.txt ]]; then
-  mv /tmp/flaggems_enable_oplist.txt "$RESULT_DIR/"
+if [[ -f "$FLAGGEMS_OPLIST" ]]; then
+  mv "$FLAGGEMS_OPLIST" "$RESULT_DIR/flaggems_enable_oplist.txt"
 fi

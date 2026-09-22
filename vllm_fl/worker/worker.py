@@ -49,14 +49,39 @@ try:
                 "VLLM_FL_DEEP_GEMM_WARMUP_LOCK_FILE",
                 "/tmp/vllm-fl-deep-gemm-warmup.lock",
             )
-            with open(lock_path, "a+") as lock_file:
+            lock_file = None
+            try:
+                lock_file = open(lock_path, "a+")
                 logger.info("Waiting for the DeepGEMM warmup lock")
                 fcntl.flock(lock_file, fcntl.LOCK_EX)
+            except OSError as error:
+                if lock_file is not None:
+                    lock_file.close()
+                logger.warning(
+                    "DeepGEMM warmup lock unavailable (%r); running unlocked",
+                    error,
+                )
+                result = _deep_gemm_warmup(*args, **kwargs)
+            else:
                 try:
                     logger.info("Running DeepGEMM warmup with the lock held")
-                    return _deep_gemm_warmup(*args, **kwargs)
+                    result = _deep_gemm_warmup(*args, **kwargs)
                 finally:
-                    fcntl.flock(lock_file, fcntl.LOCK_UN)
+                    try:
+                        fcntl.flock(lock_file, fcntl.LOCK_UN)
+                    except OSError as error:
+                        logger.warning(
+                            "Failed to release the DeepGEMM warmup lock: %r",
+                            error,
+                        )
+                    try:
+                        lock_file.close()
+                    except OSError as error:
+                        logger.warning(
+                            "Failed to close the DeepGEMM warmup lock: %r",
+                            error,
+                        )
+            return result
 
 except (ImportError, OSError, AttributeError) as warmup_import_error:
     # deep_gemm may be broken in some environments; provide a fallback

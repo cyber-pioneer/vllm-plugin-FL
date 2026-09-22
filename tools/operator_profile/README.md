@@ -76,9 +76,11 @@ FlagGems kernels and their local Triton autotuning enabled. It makes offline run
 independent of FlagTune model downloads. Remove it when remote FlagTune models
 are available and intentionally part of the test.
 
-Before startup, `serve.sh` removes an earlier temporary
-`/tmp/flaggems_enable_oplist.txt`. This prevents stale plugin evidence from
-entering the current run or a native baseline.
+Before startup, `serve.sh` removes an earlier FlagGems evidence file. Its path
+is read from `FLAGGEMS_ENABLE_OPLIST_PATH`, defaulting to
+`/tmp/flaggems_enable_oplist.txt`. Set the same exported value in the server and
+profile terminals when using a custom path. This prevents stale plugin evidence
+from entering the current run or a native baseline.
 
 ## Collect one profile
 

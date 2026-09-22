@@ -6,6 +6,7 @@ Tests for worker module.
 Note: These tests require vllm >= 0.13.0 with profiler support.
 """
 
+import fcntl
 from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -52,6 +53,52 @@ def test_kernel_warmup_patch_is_restored(monkeypatch):
     assert warmup_module.deep_gemm_warmup is original
 
 
+def test_deep_gemm_warmup_releases_lock(monkeypatch):
+    import vllm_fl.worker.worker as worker_module
+
+    events = []
+    lock_file = MagicMock()
+
+    def deep_gemm_warmup(*args, **kwargs):
+        events.append(("warmup", args, kwargs))
+        return "result"
+
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: lock_file)
+    monkeypatch.setattr(
+        "fcntl.flock", lambda _file, operation: events.append(("flock", operation))
+    )
+    monkeypatch.setattr(worker_module, "_deep_gemm_warmup", deep_gemm_warmup)
+
+    result = worker_module._serialized_deep_gemm_warmup("model", tokens=64)
+
+    assert events == [
+        ("flock", fcntl.LOCK_EX),
+        ("warmup", ("model",), {"tokens": 64}),
+        ("flock", fcntl.LOCK_UN),
+    ]
+    lock_file.close.assert_called_once_with()
+    assert result == "result"
+
+
+def test_deep_gemm_warmup_lock_error_is_optional(monkeypatch):
+    import vllm_fl.worker.worker as worker_module
+
+    events = []
+
+    def fail_to_open(*args, **kwargs):
+        raise OSError("read-only filesystem")
+
+    monkeypatch.setattr("builtins.open", fail_to_open)
+    monkeypatch.setattr(
+        worker_module,
+        "_deep_gemm_warmup",
+        lambda *args, **kwargs: events.append("warmup"),
+    )
+    worker_module._serialized_deep_gemm_warmup()
+
+    assert events == ["warmup"]
+
+
 def test_kernel_warmup_import_error_is_optional(monkeypatch):
     import vllm_fl.worker.worker as worker_module
 
@@ -69,6 +116,19 @@ def test_kernel_warmup_import_error_is_optional(monkeypatch):
     worker_module._run_kernel_warmup(object())
 
     assert warmup_module.deep_gemm_warmup is original
+
+
+def test_nvidia_model_runner_uses_upstream_legacy_core():
+    from vllm.platforms import current_platform
+
+    if getattr(current_platform, "vendor_name", None) != "nvidia":
+        pytest.skip("NVIDIA-specific runner selection")
+
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
+    from vllm_fl.worker.model_runner import ModelRunnerFL
+
+    assert issubclass(ModelRunnerFL, GPUModelRunner)
 
 
 @pytest.mark.parametrize("world_size", [2, 4])

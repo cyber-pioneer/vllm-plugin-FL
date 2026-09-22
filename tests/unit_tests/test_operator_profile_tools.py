@@ -3,6 +3,7 @@
 import gzip
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -80,3 +81,69 @@ def test_profile_script_rejects_nested_stale_trace(tmp_path):
 
         assert result.returncode == 1
         assert "profile directory already contains a trace" in result.stderr
+
+
+def make_executable(path: Path, text: str) -> None:
+    path.write_text(text, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_serve_script_cleans_configured_flaggems_oplist(tmp_path):
+    run_dir = tmp_path / "run"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "vllm", "#!/bin/sh\nexit 0\n")
+    oplist = tmp_path / "evidence/custom-oplist.txt"
+    oplist.parent.mkdir()
+    oplist.write_text("stale", encoding="utf-8")
+    env = os.environ.copy()
+    env.update(
+        {
+            "FLAGGEMS_ENABLE_OPLIST_PATH": str(oplist),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(SERVE_SCRIPT), "/model", "model", str(run_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert not oplist.exists()
+
+
+def test_profile_script_moves_configured_flaggems_oplist(tmp_path):
+    run_dir = tmp_path / "run"
+    (run_dir / "profile").mkdir(parents=True)
+    (run_dir / "results").mkdir()
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    make_executable(fake_bin / "curl", "#!/bin/sh\nexit 0\n")
+    make_executable(fake_bin / "python3", "#!/bin/sh\nexit 0\n")
+    oplist = tmp_path / "evidence/custom-oplist.txt"
+    oplist.parent.mkdir()
+    oplist.write_text("current", encoding="utf-8")
+    env = os.environ.copy()
+    env.update(
+        {
+            "FLAGGEMS_ENABLE_OPLIST_PATH": str(oplist),
+            "PATH": f"{fake_bin}:{env['PATH']}",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(PROFILE_SCRIPT), "model", str(run_dir)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    copied = run_dir / "results/flaggems_enable_oplist.txt"
+    assert result.returncode == 0
+    assert copied.read_text(encoding="utf-8") == "current"
+    assert not oplist.exists()

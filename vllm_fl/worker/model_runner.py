@@ -485,7 +485,7 @@ class ExecuteModelState(NamedTuple):
     slot_mappings: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]] | None
 
 
-class ModelRunnerFL(
+class _LegacyModelRunnerFL(
     LoRAModelRunnerMixin, KVConnectorModelRunnerMixin, ECConnectorModelRunnerMixin
 ):
     def __init__(
@@ -7802,6 +7802,16 @@ class ModelRunnerFL(
                     stats = self.encoder_timing_registry[req_id]
                     stats.encoder_forward_secs += per_request_time
                     stats.num_encoder_calls += 1
+
+
+if current_platform.vendor_name == "nvidia":
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+
+    class ModelRunnerFL(GPUModelRunner):
+        """NVIDIA runner that keeps the FL entry point on vLLM's native core."""
+
+else:
+    ModelRunnerFL = _LegacyModelRunnerFL
 
 
 @dataclass

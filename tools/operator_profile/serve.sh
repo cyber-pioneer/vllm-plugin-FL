@@ -12,6 +12,7 @@ RUN_DIR=$3
 shift 3
 
 PROFILE_DIR="$RUN_DIR/profile"
+FLAGGEMS_OPLIST=${FLAGGEMS_ENABLE_OPLIST_PATH:-/tmp/flaggems_enable_oplist.txt}
 mkdir -p "$PROFILE_DIR"
 if find "$PROFILE_DIR" -type f -name '*.pt.trace.json*' -print -quit |
   grep -q .; then
@@ -22,7 +23,7 @@ fi
 # The plugin creates this file during startup. Removing an earlier run's file
 # makes copied evidence unambiguously belong to this server and keeps a native
 # baseline from inheriting plugin evidence.
-rm -f /tmp/flaggems_enable_oplist.txt
+rm -f "$FLAGGEMS_OPLIST"
 
 printf -v PROFILER_CONFIG \
   '{"profiler":"torch","torch_profiler_dir":"%s","torch_profiler_record_shapes":true,"torch_profiler_with_stack":false,"torch_profiler_dump_cuda_time_total":false,"torch_profiler_with_memory":false,"ignore_frontend":true}' \
