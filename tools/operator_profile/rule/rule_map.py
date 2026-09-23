@@ -3,8 +3,25 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 
 OperatorIdentity = tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class KernelSignature:
+    callable_name: str
+    symbol: str
+    template_args: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class KernelGroupingRule:
+    name: str
+    match: Callable[[KernelSignature], bool]
+    key: Callable[[KernelSignature], OperatorIdentity]
+
 
 _COLLECTIVE_MARKERS = (
     "all_gather",
@@ -43,6 +60,53 @@ _STAGED_KERNEL = re.compile(
 _MOE_ALIGN_STAGE_KERNEL = re.compile(
     r"^moe_align_block_size_stage_?\d+(?:_[A-Za-z0-9]+)*$",
     re.IGNORECASE,
+)
+
+# These are concrete operations, not generic launch wrappers. Only their
+# template specialization changes across the observed runtime kernels.
+_DIRECT_KERNEL_FAMILIES = frozenset(
+    {
+        "cublasLt::splitKreduce_kernel",
+        "deep_gemm::fp8_gemm_kernel_swapAB",
+        "deep_gemm::sm90_tf32_hc_prenorm_gemm_impl",
+        "marlin_moe_wna16::Marlin",
+    }
+)
+_GENERIC_LAUNCH_WRAPPERS = frozenset({"cutlass::device_kernel"})
+
+# Add a rule here only when the discarded arguments are known specializations.
+# The rules are kernel-family based and contain no model-specific names.
+KERNEL_GROUPING_RULES = (
+    KernelGroupingRule(
+        "paged_mqa_metadata_batch_capacity",
+        lambda s: (
+            s.symbol == "deep_gemm::sched::smxx_paged_mqa_logits_metadata"
+            and len(s.template_args) == 4
+        ),
+        lambda s: ("kernel_family", s.symbol, *s.template_args[1:]),
+    ),
+    KernelGroupingRule(
+        "fp8_gemm_shape_and_launch_specializations",
+        lambda s: (
+            s.symbol == "deep_gemm::sm90_fp8_gemm_1d2d_impl"
+            and len(s.template_args) == 19
+        ),
+        # Preserve major/layout, group count, Normal versus Batched GEMM,
+        # and epilogue. The other arguments select shapes and launch tiling.
+        lambda s: (
+            "kernel_family",
+            s.symbol,
+            s.template_args[0],
+            s.template_args[4],
+            s.template_args[17],
+            s.template_args[18],
+        ),
+    ),
+    KernelGroupingRule(
+        "direct_kernel_specializations",
+        lambda s: s.symbol in _DIRECT_KERNEL_FAMILIES and bool(s.template_args),
+        lambda s: ("kernel_family", s.symbol),
+    ),
 )
 
 
@@ -99,6 +163,62 @@ def kernel_callable_identity_name(kernel_name: str) -> str:
         prefix = re.sub(r"_rank_\d+$", "", name[:template_start])
         return prefix + name[template_start:]
     return re.sub(r"_rank_\d+$", "", name)
+
+
+def kernel_signature(kernel_name: str) -> KernelSignature:
+    """Split only top-level C++ template arguments, retaining nested types."""
+    callable_name = kernel_callable_identity_name(kernel_name)
+    template_start = callable_name.find("<")
+    if template_start < 0:
+        return KernelSignature(callable_name, callable_name, ())
+
+    symbol = callable_name[:template_start]
+    arguments: list[str] = []
+    start = template_start + 1
+    angle_depth = 1
+    paren_depth = bracket_depth = brace_depth = 0
+    for index in range(start, len(callable_name)):
+        character = callable_name[index]
+        if character == "<":
+            angle_depth += 1
+        elif character == ">":
+            angle_depth -= 1
+            if angle_depth == 0:
+                if index != len(callable_name) - 1:
+                    break
+                arguments.append(callable_name[start:index].strip())
+                return KernelSignature(callable_name, symbol, tuple(arguments))
+        elif character == "(":
+            paren_depth += 1
+        elif character == ")":
+            paren_depth -= 1
+        elif character == "[":
+            bracket_depth += 1
+        elif character == "]":
+            bracket_depth -= 1
+        elif character == "{":
+            brace_depth += 1
+        elif character == "}":
+            brace_depth -= 1
+        elif (
+            character == ","
+            and angle_depth == 1
+            and paren_depth == bracket_depth == brace_depth == 0
+        ):
+            arguments.append(callable_name[start:index].strip())
+            start = index + 1
+
+    # An unfamiliar demangled form must not be grouped on a partial parse.
+    return KernelSignature(callable_name, callable_name, ())
+
+
+def specialization_identity(signature: KernelSignature) -> OperatorIdentity | None:
+    matches = [rule for rule in KERNEL_GROUPING_RULES if rule.match(signature)]
+    if len(matches) > 1:
+        raise ValueError(
+            f"overlapping kernel grouping rules: {signature.callable_name}"
+        )
+    return matches[0].key(signature) if matches else None
 
 
 def staged_kernel_family_name(kernel_name: str) -> str | None:
@@ -166,5 +286,13 @@ def operator_descriptor(
     elif operator_kind == "triton_compiled":
         identity = ("compile_kernel", kernel_name)
     else:
-        identity = ("kernel_callable", callable_name)
+        signature = kernel_signature(kernel_name)
+        identity = specialization_identity(signature)
+        if identity is None and operator_kind == "custom":
+            if signature.symbol not in _GENERIC_LAUNCH_WRAPPERS:
+                identity = ("api_kernel_family", source_operator, signature.symbol)
+            else:
+                identity = ("api_kernel_callable", source_operator, callable_name)
+        if identity is None:
+            identity = ("kernel_callable", callable_name)
     return source_operator, operator_kind, identity

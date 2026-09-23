@@ -123,10 +123,20 @@ dropped. Every check under
 `summary.json.conservation` must be `true`.
 
 Mapping and grouping rules are isolated in `rule/rule_map.py`. Coverage rules
-are isolated in `rule/rule_coverage.py`.
-Demangled kernel identities retain template arguments because they can encode
-different operations; only the function-call argument list and explicit rank
-suffix are removed.
+are isolated in `rule/rule_coverage.py`. ATen uses its API name as the operator
+identity. A custom API uses its API name and concrete kernel function, grouping
+template specializations of that function; generic launch wrappers retain the
+full callable. Unattributed kernels retain their full callable unless a
+verified kernel-family rule applies. Triton compiled kernels remain distinct.
+The full kernel name is always retained in the CSV, so grouping does not drop
+kernel events, shapes, calls, or time.
+
+Add an exceptional specialization to `KERNEL_GROUPING_RULES` with a named
+`match` and `key` lambda. `kernel_signature()` exposes the callable symbol and
+top-level template arguments without splitting nested C++ types. Keep semantic
+arguments in the key, add a positive grouping test and a negative collision
+test, and verify every conservation check in `summary.json`. Rules describe
+kernel families, not individual models.
 
 ## Generate FlagOS coverage
 

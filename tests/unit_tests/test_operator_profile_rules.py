@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 from tools.operator_profile.extract_operator_shapes import (
     format_operator_time_percent,
     operator_list_rows,
@@ -15,6 +17,7 @@ from tools.operator_profile.rule.rule_coverage import (
 )
 from tools.operator_profile.rule.rule_map import (
     kernel_callable_identity_name,
+    kernel_signature,
     operator_descriptor,
     staged_kernel_family_name,
 )
@@ -46,6 +49,118 @@ def test_kernel_identity_preserves_semantic_functor_types():
     assert kernel_callable_identity_name(nested_rank) == (
         "backend::kernel<FillFunctor_rank_3<int>, 128>"
     )
+
+
+def test_kernel_signature_splits_only_top_level_template_arguments():
+    signature = kernel_signature(
+        "void backend::kernel<4, Functor<std::array<char*, 3ul>>, false>(int*)"
+    )
+
+    assert signature.symbol == "backend::kernel"
+    assert signature.template_args == (
+        "4",
+        "Functor<std::array<char*, 3ul>>",
+        "false",
+    )
+
+
+def test_custom_api_groups_template_specializations_but_not_other_apis():
+    first = operator_descriptor(
+        "extension::metadata", "void backend::prepare_kernel<1, false>(int*)"
+    )
+    second = operator_descriptor(
+        "extension::metadata", "void backend::prepare_kernel<4, false>(int*)"
+    )
+    different_api = operator_descriptor(
+        "extension::other", "void backend::prepare_kernel<4, false>(int*)"
+    )
+
+    assert first[2] == second[2]
+    assert first[2] != different_api[2]
+
+
+def test_generic_launch_wrapper_keeps_distinct_implementations():
+    first = operator_descriptor(
+        "extension::forward", "void cutlass::device_kernel<ForwardKernel<1>>(int*)"
+    )
+    second = operator_descriptor(
+        "extension::forward", "void cutlass::device_kernel<CombineKernel<1>>(int*)"
+    )
+
+    assert first[2] != second[2]
+
+
+def test_unattributed_kernel_without_a_rule_keeps_its_full_template():
+    first = operator_descriptor("null", "void backend::kernel<1>(int*)")
+    second = operator_descriptor("null", "void backend::kernel<2>(int*)")
+
+    assert first[2] != second[2]
+
+
+def test_paged_mqa_metadata_capacity_specializations_share_an_operator():
+    first = operator_descriptor(
+        "null",
+        "void deep_gemm::sched::smxx_paged_mqa_logits_metadata<"
+        "32u, 256u, 132u, false>(int*)",
+    )
+    second = operator_descriptor(
+        "null",
+        "void deep_gemm::sched::smxx_paged_mqa_logits_metadata<"
+        "64u, 256u, 132u, false>(int*)",
+    )
+
+    assert first[2] == second[2]
+
+
+def test_fp8_gemm_groups_launch_specializations_but_preserves_gemm_type():
+    template_args = [
+        "(cute::UMMA::Major)0",
+        "0u",
+        "512u",
+        "4096u",
+        "1u",
+        "128u",
+        "128u",
+        "128u",
+        "128u",
+        "128u",
+        "128u",
+        "5u",
+        "128u",
+        "256u",
+        "1u",
+        "false",
+        "132u",
+        "(deep_gemm::GemmType)0",
+        "deep_gemm::epilogue::EpilogueIdentity",
+    ]
+
+    def identity(args: list[str]) -> tuple[str, ...]:
+        kernel = (
+            "void deep_gemm::sm90_fp8_gemm_1d2d_impl<" + ", ".join(args) + ">(float*)"
+        )
+        return operator_descriptor("null", kernel)[2]
+
+    specialized = template_args.copy()
+    specialized[2] = "1024u"
+    specialized[15] = "true"
+    batched = template_args.copy()
+    batched[17] = "(deep_gemm::GemmType)4"
+
+    assert identity(template_args) == identity(specialized)
+    assert identity(template_args) != identity(batched)
+
+
+def test_direct_kernel_families_group_template_specializations():
+    for symbol in (
+        "deep_gemm::fp8_gemm_kernel_swapAB",
+        "deep_gemm::sm90_tf32_hc_prenorm_gemm_impl",
+        "marlin_moe_wna16::Marlin",
+        "cublasLt::splitKreduce_kernel",
+    ):
+        first = operator_descriptor("null", f"void {symbol}<1, float>(int*)")
+        second = operator_descriptor("null", f"void {symbol}<2, float>(int*)")
+        assert first[2] == second[2]
 
 
 def test_triton_kernel_is_classified_without_an_operator_mapping():
@@ -84,6 +199,53 @@ def test_operator_list_merges_attributed_and_unattributed_kernel_rows():
             "kernel_time_percent(%)": "100.00",
         }
     ]
+
+
+def test_operator_list_keeps_ambiguous_same_kernel_apis_separate():
+    rows = operator_list_rows(
+        [
+            {
+                "operator_name": "extension::first",
+                "kernel_name": "shared_kernel",
+                "kernel_time_us": 1.0,
+            },
+            {
+                "operator_name": "extension::second",
+                "kernel_name": "shared_kernel",
+                "kernel_time_us": 2.0,
+            },
+            {
+                "operator_name": "null",
+                "kernel_name": "shared_kernel",
+                "kernel_time_us": 3.0,
+            },
+        ]
+    )
+
+    assert len({row["operator_id"] for row in rows}) == 3
+    assert {row["operator_name"] for row in rows} == {
+        "extension::first",
+        "extension::second",
+        "null",
+    }
+
+
+def test_kernel_family_rule_rejects_multiple_known_apis():
+    with pytest.raises(ValueError, match="kernel family matches multiple APIs"):
+        operator_list_rows(
+            [
+                {
+                    "operator_name": "extension::first",
+                    "kernel_name": "void marlin_moe_wna16::Marlin<1>(int*)",
+                    "kernel_time_us": 1.0,
+                },
+                {
+                    "operator_name": "extension::second",
+                    "kernel_name": "void marlin_moe_wna16::Marlin<2>(int*)",
+                    "kernel_time_us": 2.0,
+                },
+            ]
+        )
 
 
 def test_nvjet_kernels_share_the_aten_mm_operator():

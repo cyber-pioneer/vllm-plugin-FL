@@ -525,18 +525,43 @@ def summary_csv_rows(
 
 
 def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    custom_apis_by_kernel: dict[str, set[str]] = defaultdict(set)
+    for summary_row in summary_rows:
+        source_name = summary_row["operator_name"]
+        kernel_name = summary_row["kernel_name"]
+        operator_name, operator_kind, _identity = operator_descriptor(
+            source_name, kernel_name
+        )
+        if source_name != "null" and operator_kind == "custom":
+            custom_apis_by_kernel[kernel_name].add(operator_name)
+
     relations: dict[tuple[OperatorIdentity | None, str], set[tuple[str, str]]] = (
         defaultdict(set)
     )
     relation_ns: Counter[tuple[OperatorIdentity | None, str]] = Counter()
+    known_apis_by_family: dict[OperatorIdentity, set[str]] = defaultdict(set)
     for summary_row in summary_rows:
         kernel_name = summary_row["kernel_name"]
+        source_name = summary_row["operator_name"]
+        matching_apis = custom_apis_by_kernel[kernel_name]
+        if source_name == "null" and len(matching_apis) == 1:
+            source_name = next(iter(matching_apis))
         operator_name, operator_kind, identity = operator_descriptor(
-            summary_row["operator_name"], kernel_name
+            source_name, kernel_name
         )
+        if identity[0] == "kernel_family" and operator_name != "null":
+            known_apis_by_family[identity].add(operator_name)
         relation = (identity, kernel_name)
         relations[relation].add((operator_name, operator_kind))
         relation_ns[relation] += csv_us_to_ns(str(summary_row["kernel_time_us"]))
+
+    conflicting_families = {
+        identity: names
+        for identity, names in known_apis_by_family.items()
+        if len(names) > 1
+    }
+    if conflicting_families:
+        raise ValueError(f"kernel family matches multiple APIs: {conflicting_families}")
 
     kernel_total_ns = sum(relation_ns.values())
 
@@ -720,21 +745,29 @@ def validate_csv_outputs(
         if seen_communication and not is_communication:
             communication_rows_last = False
 
-    custom_ids_by_identity: dict[str, set[str]] = defaultdict(set)
+    custom_ids_by_identity: dict[tuple[str, tuple[str, ...]], set[str]] = defaultdict(
+        set
+    )
     for row in operator_rows:
         if row["operator_kind"] == "custom":
-            identity = kernel_callable_identity_name(row["kernel_name"])
-            custom_ids_by_identity[identity].add(row["operator_id"])
+            identity = operator_descriptor(row["operator_name"], row["kernel_name"])[2]
+            custom_ids_by_identity[(row["operator_name"], identity)].add(
+                row["operator_id"]
+            )
     custom_parameter_variants_grouped = all(
         len(operator_ids) == 1 for operator_ids in custom_ids_by_identity.values()
     )
-    kernel_ids_by_callable: dict[str, set[str]] = defaultdict(set)
+    kernel_ids_by_callable: dict[tuple[str, str, str], set[str]] = defaultdict(set)
     for row in operator_rows:
         if row["operator_kind"] in {
             "custom",
             "unattributed",
         }:
-            identity = kernel_callable_identity_name(row["kernel_name"])
+            identity = (
+                row["operator_kind"],
+                row["operator_name"],
+                kernel_callable_identity_name(row["kernel_name"]),
+            )
             kernel_ids_by_callable[identity].add(row["operator_id"])
     kernel_specializations_grouped = all(
         len(operator_ids) == 1 for operator_ids in kernel_ids_by_callable.values()
