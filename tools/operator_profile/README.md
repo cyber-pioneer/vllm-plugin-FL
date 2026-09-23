@@ -130,8 +130,8 @@ python3 tools/operator_profile/generate_flagos_coverage.py \
   --output /workspace/op_profile/qwen3.6_35b_a3b_flagos_coverage/operator_flagos_coverage.csv
 ```
 
-The command also writes `operator_flagos_coverage_percent.csv` beside the
-detailed report. It contains `covered_operator_count`,
+The command also writes `operator_flagos_coverage_summary.csv` beside the
+detailed `operator_flagos_coverage.csv` report. It contains `covered_operator_count`,
 `undetermined_operator_count`, `total_operator_count`, and
 `coverage_percent(%)` in one row. The percentage uses two decimal places.
 Operators without enough evidence to make a coverage decision have empty

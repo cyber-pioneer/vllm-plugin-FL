@@ -22,7 +22,7 @@ COVERAGE_FIELDNAMES = [
     "plugin_operator_id",
     "evidence",
 ]
-PERCENT_FIELDNAMES = [
+SUMMARY_FIELDNAMES = [
     "covered_operator_count",
     "undetermined_operator_count",
     "total_operator_count",
@@ -119,11 +119,11 @@ def main() -> None:
     undetermined = sum(row["flagos_covered"] == "" for row in rows)
     denominator = len(rows)
     percent = numerator / denominator * 100 if denominator else 0.0
-    percent_output = args.output.parent / "operator_flagos_coverage_percent.csv"
-    with percent_output.open("w", encoding="utf-8", newline="") as target:
+    summary_output = args.output.parent / "operator_flagos_coverage_summary.csv"
+    with summary_output.open("w", encoding="utf-8", newline="") as target:
         writer = csv.DictWriter(
             target,
-            fieldnames=PERCENT_FIELDNAMES,
+            fieldnames=SUMMARY_FIELDNAMES,
             lineterminator="\n",
         )
         writer.writeheader()
@@ -143,7 +143,7 @@ def main() -> None:
                 "denominator": denominator,
                 "coverage_percent": round(percent, 2),
                 "output": str(args.output),
-                "percent_output": str(percent_output),
+                "summary_output": str(summary_output),
             },
             sort_keys=True,
         )
