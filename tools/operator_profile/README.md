@@ -9,8 +9,13 @@ The workload is fixed at 64 concurrent requests with 4096 input tokens and 256
 output tokens per request. The first batch is warmup. Only the second batch is
 inside the profiling window.
 
-Run all commands from the vllm-plugin-FL repository root and use a new directory
-under `/workspace/op_profile` for each scenario.
+Run all commands from the vllm-plugin-FL repository root. Use a stable directory
+under `/workspace/op_profile` for each scenario and replace that directory when
+rerunning it. Directory names use the complete normalized model name, followed
+by implementation, execution mode, input length, and output length. Replace
+hyphens with underscores and preserve meaningful version dots, for example
+`qwen3.6_35b_a3b_plugin_graph_4096_256` and
+`deepseek_v4_flash_plugin_graph_4096_256`.
 
 ## Start a server
 
@@ -21,7 +26,7 @@ vLLM arguments remain explicit command-line inputs.
 Qwen plugin graph example:
 
 ```bash
-RUN_DIR=/workspace/op_profile/qwen_plugin_graph_4096_256
+RUN_DIR=/workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256
 VLLM_PLUGINS=fl USE_FLAGTUNE=0 bash tools/operator_profile/serve.sh \
   /models/Qwen3.6-35B-A3B qwen "$RUN_DIR" \
   --tensor-parallel-size 2 \
@@ -36,7 +41,7 @@ VLLM_PLUGINS=fl USE_FLAGTUNE=0 bash tools/operator_profile/serve.sh \
 Qwen native-vLLM graph baseline:
 
 ```bash
-RUN_DIR=/workspace/op_profile/qwen_native_graph_4096_256
+RUN_DIR=/workspace/op_profile/qwen3.6_35b_a3b_native_graph_4096_256
 VLLM_PLUGINS="" bash tools/operator_profile/serve.sh \
   /models/Qwen3.6-35B-A3B qwen "$RUN_DIR" \
   --tensor-parallel-size 2 \
@@ -51,7 +56,7 @@ VLLM_PLUGINS="" bash tools/operator_profile/serve.sh \
 DeepSeek plugin graph example:
 
 ```bash
-RUN_DIR=/workspace/op_profile/deepseek_plugin_graph_4096_256
+RUN_DIR=/workspace/op_profile/deepseek_v4_flash_plugin_graph_4096_256
 VLLM_PLUGINS=fl USE_FLAGTUNE=0 bash tools/operator_profile/serve.sh \
   /models/DeepSeek-V4-Flash deepseek-v4-flash "$RUN_DIR" \
   --tensor-parallel-size 8 \
@@ -88,7 +93,7 @@ Run this in another terminal after the server starts:
 
 ```bash
 bash tools/operator_profile/profile.sh qwen \
-  /workspace/op_profile/qwen_plugin_graph_4096_256
+  /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256
 ```
 
 The script waits for server health, sends one warmup batch, calls the native
@@ -119,10 +124,10 @@ are isolated in `rule/rule_coverage.py`.
 
 ```bash
 python3 tools/operator_profile/generate_flagos_coverage.py \
-  --baseline /workspace/op_profile/qwen_native_graph_4096_256/results/operator_list.csv \
-  --plugin /workspace/op_profile/qwen_plugin_graph_4096_256/results/operator_list.csv \
-  --flaggems-oplist /workspace/op_profile/qwen_plugin_graph_4096_256/results/flaggems_enable_oplist.txt \
-  --output /workspace/op_profile/qwen_flagos_coverage/operator_flagos_coverage.csv
+  --baseline /workspace/op_profile/qwen3.6_35b_a3b_native_graph_4096_256/results/operator_list.csv \
+  --plugin /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/results/operator_list.csv \
+  --flaggems-oplist /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/results/flaggems_enable_oplist.txt \
+  --output /workspace/op_profile/qwen3.6_35b_a3b_flagos_coverage/operator_flagos_coverage.csv
 ```
 
 The command also writes `operator_flagos_coverage_percent.csv` beside the
