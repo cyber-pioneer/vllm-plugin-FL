@@ -251,6 +251,8 @@ def test_kernel_family_rule_rejects_multiple_known_apis():
 def test_nvjet_kernels_share_the_aten_mm_operator():
     attributed = operator_descriptor("aten::mm", "nvjet_tst_128x64_TNT")
     unattributed = operator_descriptor("null", "nvjet_tst_64x8_TNN")
+    tss_attributed = operator_descriptor("aten::mm", "nvjet_tss_128x64_TNT")
+    tss_unattributed = operator_descriptor("null", "nvjet_tss_64x8_TNN")
 
     assert attributed == (
         "aten::mm",
@@ -258,6 +260,8 @@ def test_nvjet_kernels_share_the_aten_mm_operator():
         ("operator", "aten", "aten::mm"),
     )
     assert unattributed == attributed
+    assert tss_attributed == attributed
+    assert tss_unattributed == attributed
 
 
 def test_moe_align_stages_are_distinct_custom_operators():

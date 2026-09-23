@@ -247,7 +247,7 @@ def operator_descriptor(
 ) -> tuple[str, str, OperatorIdentity]:
     """Map an operator/kernel pair without model- or kernel-specific tables."""
     callable_name = kernel_callable_identity_name(kernel_name)
-    if callable_name.startswith("nvjet_tst_"):
+    if callable_name.startswith(("nvjet_tst_", "nvjet_tss_")):
         return (
             "aten::mm",
             "aten",
