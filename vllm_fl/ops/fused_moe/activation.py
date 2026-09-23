@@ -1,6 +1,11 @@
 import torch
 import torch.nn.functional as F
-from vllm.model_executor.layers.fused_moe.activation import MoEActivation
+
+from vllm.model_executor.layers.fused_moe.activation import (
+    MoEActivation,
+    apply_moe_activation as upstream_apply_moe_activation,
+)
+
 from vllm_fl.dispatch import CachedOp
 
 _silu_and_mul = CachedOp("silu_and_mul")
@@ -32,6 +37,13 @@ def apply_moe_activation(
 
     # Activations with gated multiplication (gate × activation(up))
     if activation == MoEActivation.SILU:
+        if clamp_limit is not None:
+            return upstream_apply_moe_activation(
+                activation,
+                output,
+                input,
+                clamp_limit=clamp_limit,
+            )
         output.copy_(_silu_and_mul(None, input))
     elif activation == MoEActivation.GELU:
         output.copy_(_gelu_and_mul(None, input))

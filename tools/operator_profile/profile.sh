@@ -8,12 +8,13 @@ fi
 
 MODEL=$1
 RUN_DIR=$2
+RUN_DIR=$(cd "$RUN_DIR" && pwd)
 PROFILE_DIR="$RUN_DIR/profile"
 RESULT_DIR="$RUN_DIR/results"
 TOOL_DIR=$(cd "$(dirname "$0")" && pwd)
 BASE_URL=${PROFILE_BASE_URL:-http://localhost:8000}
 HEALTH_TIMEOUT=${PROFILE_HEALTH_TIMEOUT_SECONDS:-3600}
-FLAGGEMS_OPLIST=${FLAGGEMS_ENABLE_OPLIST_PATH:-/tmp/flaggems_enable_oplist.txt}
+FLAGGEMS_OPLIST=${FLAGGEMS_ENABLE_OPLIST_PATH:-$RUN_DIR/flaggems_enable_oplist.txt}
 
 if [[ ! -d "$PROFILE_DIR" ]]; then
   echo "profile directory does not exist: $PROFILE_DIR" >&2

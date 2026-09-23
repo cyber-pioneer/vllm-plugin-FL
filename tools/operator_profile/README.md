@@ -83,9 +83,11 @@ are available and intentionally part of the test.
 
 Before startup, `serve.sh` removes an earlier FlagGems evidence file. Its path
 is read from `FLAGGEMS_ENABLE_OPLIST_PATH`, defaulting to
-`/tmp/flaggems_enable_oplist.txt`. Set the same exported value in the server and
-profile terminals when using a custom path. This prevents stale plugin evidence
-from entering the current run or a native baseline.
+`<run-dir>/flaggems_enable_oplist.txt`. The server exports this path to its
+workers, and `profile.sh` derives the same default from the run directory.
+Set the same exported value in both terminals only when using a custom path.
+This keeps concurrent runs from sharing evidence and prevents stale plugin
+evidence from entering a native baseline.
 
 ## Collect one profile
 
@@ -107,18 +109,24 @@ then parses rank 0. An output directory containing an existing trace is rejected
   unattributed events for the same operator ID and kernel are merged, preferring
   the attributed operator name. `1.23` means `1.23%`;
   the column header carries the `%` unit, and values below `0.01%` are written
-  as `<0.01`.
+  as `<0.01`. The denominator is the sum of profiled GPU kernel durations;
+  CPU time and end-to-end wall time are not included.
 - `kernel_time.csv`: kernel call counts, durations, and runtime time shares.
 - `kernel_shape_dtype.csv`: kernel/operator/shape/dtype mapping variants.
 - `summary.json`: trace scope, mapping coverage, and conservation checks.
 - `flaggems_enable_oplist.txt`: current plugin evidence, when generated.
 
 Missing operator attribution, shape, or dtype is retained as `null` with an
-explicit mapping status. No kernel is dropped. Every check under
+explicit mapping status. CUDA Graph replay does not expose every kernel's
+input tensors, so graph-mode shape/dtype coverage is best effort; no kernel is
+dropped. Every check under
 `summary.json.conservation` must be `true`.
 
 Mapping and grouping rules are isolated in `rule/rule_map.py`. Coverage rules
 are isolated in `rule/rule_coverage.py`.
+Demangled kernel identities retain template arguments because they can encode
+different operations; only the function-call argument list and explicit rank
+suffix are removed.
 
 ## Generate FlagOS coverage
 
@@ -140,8 +148,10 @@ count.
 
 The current policy counts every observed Triton operation in the numerator.
 Other operations require auditable FlagGems evidence. An ATen API is covered
-when the current plugin run's enable-op list contains that API; kernel names are
-not used as secondary ATen replacement evidence. Communication remains in the
+when a recorded FlagGems callable maps to that API through the installed
+FlagGems ATen registration table. Without an enable-op list, ATen coverage is
+undetermined rather than false. Kernel names are not used as secondary ATen
+replacement evidence. Communication remains in the
 denominator and requires FlagCX evidence to enter the numerator. Coverage is
 based on operator kinds and is not weighted by calls or execution time. The
 report writes Boolean `flagos_covered` values and a `flagos_type`

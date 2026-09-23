@@ -342,6 +342,7 @@ class TritonExpertsFL(TritonExperts):
             self._lora_context is None
             and current_platform.is_cuda()
             and activation == MoEActivation.SILU
+            and self.gemm1_clamp_limit is None
         ):
             import flag_gems
 

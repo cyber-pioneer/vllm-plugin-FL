@@ -72,14 +72,16 @@ def main() -> None:
     plugin_by_name: dict[str, set[int]] = defaultdict(set)
     for operator_id, values in plugin.items():
         for operator_name in values["operator_names"]:
-            plugin_by_name[operator_name].add(operator_id)
+            if operator_name.strip().lower() not in {"", "null"}:
+                plugin_by_name[operator_name].add(operator_id)
 
     rows: list[dict[str, Any]] = []
     for operator_id in sorted(baseline):
         values = baseline[operator_id]
         matching_plugin_ids = set()
         for operator_name in values["operator_names"]:
-            matching_plugin_ids.update(plugin_by_name.get(operator_name, set()))
+            if operator_name.strip().lower() not in {"", "null"}:
+                matching_plugin_ids.update(plugin_by_name.get(operator_name, set()))
         decision = classify_coverage(
             values["operator_names"],
             values["operator_kinds"],

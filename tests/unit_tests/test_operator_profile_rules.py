@@ -1,3 +1,9 @@
+import csv
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType
+
 from tools.operator_profile.extract_operator_shapes import (
     format_operator_time_percent,
     operator_list_rows,
@@ -5,6 +11,7 @@ from tools.operator_profile.extract_operator_shapes import (
 from tools.operator_profile.rule.rule_coverage import (
     FlagOSEvidence,
     classify_coverage,
+    read_flagos_evidence,
 )
 from tools.operator_profile.rule.rule_map import (
     kernel_callable_identity_name,
@@ -22,7 +29,23 @@ def test_operator_time_percent_uses_hundredth_percent_resolution():
 def test_kernel_callable_identity_ignores_launch_specialization():
     kernel = "void backend::kernel_rank_3<float, 128>(float*, int)"
 
-    assert kernel_callable_identity_name(kernel) == "backend::kernel"
+    assert kernel_callable_identity_name(kernel) == "backend::kernel<float, 128>"
+
+
+def test_kernel_identity_preserves_semantic_functor_types():
+    fill = "void backend::vectorized_elementwise_kernel<FillFunctor<int>, 128>(int*)"
+    sigmoid = "void backend::vectorized_elementwise_kernel<SigmoidFunctor, 256>(int*)"
+
+    assert kernel_callable_identity_name(fill) == (
+        "backend::vectorized_elementwise_kernel<FillFunctor<int>, 128>"
+    )
+    assert kernel_callable_identity_name(sigmoid) == (
+        "backend::vectorized_elementwise_kernel<SigmoidFunctor, 256>"
+    )
+    nested_rank = "void backend::kernel<FillFunctor_rank_3<int>, 128>(int*)"
+    assert kernel_callable_identity_name(nested_rank) == (
+        "backend::kernel<FillFunctor_rank_3<int>, 128>"
+    )
 
 
 def test_triton_kernel_is_classified_without_an_operator_mapping():
@@ -164,6 +187,117 @@ def test_void_communication_kernel_uses_communication_policy():
     assert decision.evidence == (
         "communication is in the denominator; no FlagCX evidence"
     )
+
+
+def test_triton_communication_does_not_bypass_flagcx_evidence():
+    decision = classify_coverage(
+        operator_names={"c10d::all_reduce"},
+        operator_kinds={"communication"},
+        kernel_names={"triton_all_reduce"},
+        evidence=FlagOSEvidence(frozenset(), frozenset(), ()),
+    )
+
+    assert decision.covered is False
+    assert decision.flagos_type == "none"
+
+
+def test_flaggems_registry_maps_callable_without_module_false_positive(
+    tmp_path, monkeypatch
+):
+    def zeros():
+        pass
+
+    def zero_():
+        pass
+
+    def softmax_out():
+        pass
+
+    def true_divide_():
+        pass
+
+    zeros.__module__ = zero_.__module__ = "flag_gems.ops.zeros"
+    softmax_out.__module__ = "flag_gems.ops.softmax"
+    true_divide_.__module__ = "flag_gems.ops.div"
+    flag_gems = ModuleType("flag_gems")
+    flag_gems.FULL_CONFIG_BY_FUNC = {
+        "zeros": [("zeros", zeros)],
+        "zero_": [("zero_", zero_)],
+        "softmax": [("_softmax", softmax_out)],
+        "true_divide_": [("div_.Tensor", true_divide_)],
+    }
+    monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
+    evidence_path = tmp_path / "flaggems_enable_oplist.txt"
+    evidence_path.write_text(
+        "[DEBUG] flag_gems.ops.zeros.zero_: GEMS ZERO_\n"
+        "[DEBUG] flag_gems.ops.softmax.softmax: GEMS SOFTMAX\n"
+        "[DEBUG] flag_gems.ops.div.true_divide_: GEMS TRUE_DIVIDE_\n",
+        encoding="utf-8",
+    )
+
+    evidence = read_flagos_evidence(evidence_path)
+
+    assert evidence.aten_apis == {"aten::zero_", "aten::_softmax", "aten::div_"}
+    assert "aten::zeros" not in evidence.aten_apis
+
+
+def test_missing_flaggems_evidence_leaves_aten_undetermined():
+    decision = classify_coverage(
+        operator_names={"aten::sum"},
+        operator_kinds={"aten"},
+        kernel_names={"sum_kernel"},
+        evidence=read_flagos_evidence(None),
+    )
+
+    assert decision.covered is None
+    assert decision.flagos_type == ""
+
+
+def test_null_operator_names_do_not_create_plugin_associations(tmp_path):
+    baseline = tmp_path / "baseline.csv"
+    plugin = tmp_path / "plugin.csv"
+    for path, kernel in ((baseline, "baseline_kernel"), (plugin, "plugin_kernel")):
+        with path.open("w", encoding="utf-8", newline="") as output:
+            writer = csv.DictWriter(
+                output,
+                fieldnames=[
+                    "operator_id",
+                    "operator_name",
+                    "operator_kind",
+                    "kernel_name",
+                ],
+            )
+            writer.writeheader()
+            writer.writerow(
+                {
+                    "operator_id": 1,
+                    "operator_name": "null",
+                    "operator_kind": "unattributed",
+                    "kernel_name": kernel,
+                }
+            )
+    report = tmp_path / "report.csv"
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "tools/operator_profile/generate_flagos_coverage.py"
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--baseline",
+            str(baseline),
+            "--plugin",
+            str(plugin),
+            "--output",
+            str(report),
+        ],
+        check=True,
+    )
+
+    with report.open(encoding="utf-8", newline="") as source:
+        row = next(csv.DictReader(source))
+    assert row["plugin_operator_id"] == "[]"
 
 
 def test_aten_without_enable_op_evidence_is_not_covered():

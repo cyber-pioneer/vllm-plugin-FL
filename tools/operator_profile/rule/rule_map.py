@@ -78,7 +78,7 @@ def is_pure_communication(operator_name: str, kernel_name: str) -> bool:
 
 
 def kernel_callable_identity_name(kernel_name: str) -> str:
-    """Return a demangled kernel's namespace-qualified callable name."""
+    """Return a callable identity, preserving semantic template types."""
     name = kernel_name.strip()
     if name.startswith("void "):
         name = name[5:].lstrip()
@@ -94,17 +94,11 @@ def kernel_callable_identity_name(kernel_name: str) -> str:
                     name = name[:index].rstrip()
                     break
 
-    normalized: list[str] = []
-    template_depth = 0
-    for character in name:
-        if character == "<":
-            template_depth += 1
-        elif character == ">" and template_depth:
-            template_depth -= 1
-        elif template_depth == 0:
-            normalized.append(character)
-    callable_name = "".join(normalized) if template_depth == 0 else name
-    return re.sub(r"_rank_\d+$", "", callable_name)
+    template_start = name.find("<")
+    if template_start >= 0:
+        prefix = re.sub(r"_rank_\d+$", "", name[:template_start])
+        return prefix + name[template_start:]
+    return re.sub(r"_rank_\d+$", "", name)
 
 
 def staged_kernel_family_name(kernel_name: str) -> str | None:

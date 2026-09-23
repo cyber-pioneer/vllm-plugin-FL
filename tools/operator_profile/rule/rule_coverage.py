@@ -8,13 +8,6 @@ from pathlib import Path
 
 TRITON_OPERATOR_KINDS = frozenset({"torch_compile", "triton_compiled"})
 
-# The module component in ``flag_gems.ops.<module>.<callable>`` normally maps
-# directly to an ATen API. These aliases cover names where it does not.
-FLAGGEMS_ATEN_ALIASES = {
-    "layernorm": "native_layer_norm",
-    "true_divide": "div",
-}
-
 # Explicit fused implementation to baseline API mappings. A rule is usable
 # only when its evidence token is present in the captured enable-op list.
 FLAGGEMS_FUSED_API_RULES = {
@@ -38,12 +31,27 @@ class FlagOSEvidence:
     aten_apis: frozenset[str]
     fused_apis: frozenset[str]
     lines: tuple[str, ...]
+    available: bool = True
+
+
+def registered_aten_apis(
+    module_name: str, callable_name: str, registry: dict
+) -> set[str]:
+    """Resolve a recorded FlagGems callable through its ATen registrations."""
+    module = f"flag_gems.ops.{module_name}"
+    return {
+        "aten::" + registration[0].split(".", 1)[0]
+        for registration in registry.get(callable_name, ())
+        if getattr(registration[1], "__module__", None) == module
+    }
 
 
 def read_flagos_evidence(path: Path | None) -> FlagOSEvidence:
-    """Parse the runtime FlagGems enable list without inferring from names."""
+    """Parse runtime evidence using FlagGems' actual ATen registration table."""
     if path is None:
-        return FlagOSEvidence(frozenset(), frozenset(), ())
+        return FlagOSEvidence(frozenset(), frozenset(), (), available=False)
+    from flag_gems import FULL_CONFIG_BY_FUNC
+
     lines = tuple(
         line.strip()
         for line in path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -55,9 +63,9 @@ def read_flagos_evidence(path: Path | None) -> FlagOSEvidence:
         if not match:
             continue
         module_name, callable_name = match.groups()
-        for api_name in (module_name, callable_name):
-            api_name = FLAGGEMS_ATEN_ALIASES.get(api_name, api_name)
-            aten_apis.add(f"aten::{api_name}")
+        aten_apis.update(
+            registered_aten_apis(module_name, callable_name, FULL_CONFIG_BY_FUNC)
+        )
 
     fused_apis: set[str] = set()
     for token, api_names in FLAGGEMS_FUSED_API_RULES.items():
@@ -86,6 +94,12 @@ def classify_coverage(
     numerator. Other operators require runtime evidence. Communication is not
     covered unless a future FlagCX evidence rule is added here.
     """
+    if "communication" in operator_kinds:
+        return CoverageDecision(
+            False,
+            "none",
+            "communication is in the denominator; no FlagCX evidence",
+        )
     if is_triton_operator(operator_names, operator_kinds, kernel_names):
         return CoverageDecision(
             True,
@@ -107,16 +121,16 @@ def classify_coverage(
             "flaggems fused mapping: " + ",".join(matched_fused),
         )
     if "aten" in operator_kinds:
+        if not evidence.available:
+            return CoverageDecision(
+                None,
+                "",
+                "FlagGems enable-op evidence was not provided",
+            )
         return CoverageDecision(
             False,
             "none",
             "ATen API is absent from flaggems_enable_oplist",
-        )
-    if "communication" in operator_kinds:
-        return CoverageDecision(
-            False,
-            "none",
-            "communication is in the denominator; no FlagCX evidence",
         )
     return CoverageDecision(
         None,
