@@ -31,19 +31,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_nvidia_model_runner_uses_upstream_legacy_core():
-    from vllm.platforms import current_platform
-
-    if getattr(current_platform, "vendor_name", None) != "nvidia":
-        pytest.skip("NVIDIA-specific runner selection")
-
-    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-    from vllm_fl.worker.model_runner import ModelRunnerFL
-
-    assert issubclass(ModelRunnerFL, GPUModelRunner)
-
-
 @pytest.mark.parametrize("world_size", [2, 4])
 def test_musa_workers_bind_config_before_patching_and_loading(monkeypatch, world_size):
     pytest.importorskip("torch_musa")

@@ -485,7 +485,7 @@ class ExecuteModelState(NamedTuple):
     slot_mappings: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]] | None
 
 
-class _LegacyModelRunnerFL(
+class ModelRunnerFL(
     LoRAModelRunnerMixin, KVConnectorModelRunnerMixin, ECConnectorModelRunnerMixin
 ):
     def __init__(
@@ -6662,7 +6662,10 @@ class _LegacyModelRunnerFL(
         profiling_pool = current_platform.graph_pool_handle()
         encoder_profiling_pool = current_platform.graph_pool_handle()
         original_pools: dict[int, Any] = {}
-        for instance in list(GraphWrapper._all_instances):
+        all_wrappers = list(GraphWrapper._all_instances) + list(
+            BreakableCUDAGraphWrapper._all_instances
+        )
+        for instance in all_wrappers:
             original_pools[id(instance)] = instance.graph_pool
             instance.graph_pool = profiling_pool
 
@@ -6730,7 +6733,13 @@ class _LegacyModelRunnerFL(
         finally:
             set_cudagraph_capturing_enabled(False)
             GraphWrapper.clear_all_graphs()
-            for instance in list(GraphWrapper._all_instances):
+            BreakableCUDAGraphWrapper.clear_all_graphs()
+            if encoder_cudagraph_manager is not None:
+                encoder_cudagraph_manager.clear()
+            all_wrappers = list(GraphWrapper._all_instances) + list(
+                BreakableCUDAGraphWrapper._all_instances
+            )
+            for instance in all_wrappers:
                 if id(instance) in original_pools:
                     instance.graph_pool = original_pools[id(instance)]
             for key_set in self.cudagraph_dispatcher.cudagraph_keys.values():
@@ -7802,16 +7811,6 @@ class _LegacyModelRunnerFL(
                     stats = self.encoder_timing_registry[req_id]
                     stats.encoder_forward_secs += per_request_time
                     stats.num_encoder_calls += 1
-
-
-if current_platform.vendor_name == "nvidia":
-    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
-
-    class ModelRunnerFL(GPUModelRunner):
-        """NVIDIA runner that keeps the FL entry point on vLLM's native core."""
-
-else:
-    ModelRunnerFL = _LegacyModelRunnerFL
 
 
 @dataclass
