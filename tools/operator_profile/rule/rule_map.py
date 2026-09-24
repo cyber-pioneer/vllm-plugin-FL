@@ -67,8 +67,6 @@ _MOE_ALIGN_STAGE_KERNEL = re.compile(
 _DIRECT_KERNEL_FAMILIES = frozenset(
     {
         "cublasLt::splitKreduce_kernel",
-        "deep_gemm::fp8_gemm_kernel_swapAB",
-        "deep_gemm::sm90_tf32_hc_prenorm_gemm_impl",
         "marlin_moe_wna16::Marlin",
     }
 )
@@ -78,29 +76,9 @@ _GENERIC_LAUNCH_WRAPPERS = frozenset({"cutlass::device_kernel"})
 # The rules are kernel-family based and contain no model-specific names.
 KERNEL_GROUPING_RULES = (
     KernelGroupingRule(
-        "paged_mqa_metadata_batch_capacity",
-        lambda s: (
-            s.symbol == "deep_gemm::sched::smxx_paged_mqa_logits_metadata"
-            and len(s.template_args) == 4
-        ),
-        lambda s: ("kernel_family", s.symbol, *s.template_args[1:]),
-    ),
-    KernelGroupingRule(
-        "fp8_gemm_shape_and_launch_specializations",
-        lambda s: (
-            s.symbol == "deep_gemm::sm90_fp8_gemm_1d2d_impl"
-            and len(s.template_args) == 19
-        ),
-        # Preserve major/layout, group count, Normal versus Batched GEMM,
-        # and epilogue. The other arguments select shapes and launch tiling.
-        lambda s: (
-            "kernel_family",
-            s.symbol,
-            s.template_args[0],
-            s.template_args[4],
-            s.template_args[17],
-            s.template_args[18],
-        ),
+        "deep_gemm_callable",
+        lambda s: s.symbol.startswith("deep_gemm::"),
+        lambda s: ("kernel_family", s.symbol),
     ),
     KernelGroupingRule(
         "direct_kernel_specializations",
@@ -252,6 +230,13 @@ def operator_descriptor(
             "aten::mm",
             "aten",
             ("operator", "aten", "aten::mm"),
+        )
+    if kernel_name.strip().startswith("void deep_gemm::"):
+        signature = kernel_signature(kernel_name)
+        return (
+            source_operator,
+            _operator_kind(source_operator, kernel_name),
+            specialization_identity(signature) or ("kernel_callable", callable_name),
         )
     if _MOE_ALIGN_STAGE_KERNEL.fullmatch(callable_name):
         return (

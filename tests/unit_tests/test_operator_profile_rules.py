@@ -112,7 +112,7 @@ def test_paged_mqa_metadata_capacity_specializations_share_an_operator():
     assert first[2] == second[2]
 
 
-def test_fp8_gemm_groups_launch_specializations_but_preserves_gemm_type():
+def test_fp8_gemm_groups_all_template_specializations():
     template_args = [
         "(cute::UMMA::Major)0",
         "0u",
@@ -148,13 +148,30 @@ def test_fp8_gemm_groups_launch_specializations_but_preserves_gemm_type():
     batched[17] = "(deep_gemm::GemmType)4"
 
     assert identity(template_args) == identity(specialized)
-    assert identity(template_args) != identity(batched)
+    assert identity(template_args) == identity(batched)
+
+
+def test_deep_gemm_function_name_groups_across_api_attribution():
+    attributed = operator_descriptor(
+        "vllm::gemm", "void deep_gemm::sm90_fp8_gemm_1d2d_impl<1>(float*)"
+    )
+    unattributed = operator_descriptor(
+        "null", "void deep_gemm::sm90_fp8_gemm_1d2d_impl<4>(float*)"
+    )
+    another_function = operator_descriptor(
+        "null", "void deep_gemm::sm90_fp8_paged_mqa_logits<1>(float*)"
+    )
+
+    assert attributed[2] == unattributed[2]
+    assert attributed[2] != another_function[2]
+    assert attributed[2] == (
+        "kernel_family",
+        "deep_gemm::sm90_fp8_gemm_1d2d_impl",
+    )
 
 
 def test_direct_kernel_families_group_template_specializations():
     for symbol in (
-        "deep_gemm::fp8_gemm_kernel_swapAB",
-        "deep_gemm::sm90_tf32_hc_prenorm_gemm_impl",
         "marlin_moe_wna16::Marlin",
         "cublasLt::splitKreduce_kernel",
     ):
