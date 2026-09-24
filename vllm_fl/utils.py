@@ -58,6 +58,8 @@ VENDOR_DEVICE_MAP: dict[str, dict[str, str]] = {
     "enflame": {"device_type": "gcu", "device_name": "gcu"},
     # Registered backend: vendor/kunlunxin
     "kunlunxin": {"device_type": "cuda", "device_name": "kunlunxin"},
+    # Registered backend: vendor/supa
+    "biren": {"device_type": "cuda", "device_name": "supa"},
 }
 
 # Extra graph-partition boundaries required by a device runtime. vLLM's
@@ -289,6 +291,7 @@ class DeviceInfo:
             "gcu",
             "enflame",
             "kunlunxin",
+            "biren",
         ]
         backend.set_torch_backend_device_fn(self.device.vendor_name)
 
