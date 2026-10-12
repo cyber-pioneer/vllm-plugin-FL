@@ -22,7 +22,7 @@ def test_hopper_optimization_is_disabled_by_default(monkeypatch):
     assert path is not None
     assert path.name == "nvidia.yaml"
     assert config["op_backends"]["attention_backend"][0] == "flagos"
-    assert "mm" in config["flagos_blacklist"]
+    assert "mm" not in config["flagos_blacklist"]
 
 
 def test_hopper_uses_architecture_specific_config_when_enabled(monkeypatch):
@@ -48,7 +48,7 @@ def test_non_hopper_nvidia_keeps_vendor_wide_config(monkeypatch):
     assert path is not None
     assert path.name == "nvidia.yaml"
     assert config["op_backends"]["attention_backend"][0] == "flagos"
-    assert "mm" in config["flagos_blacklist"]
+    assert "mm" not in config["flagos_blacklist"]
 
 
 def test_kunlunxin_numerical_fallbacks_keep_cat_enabled():
