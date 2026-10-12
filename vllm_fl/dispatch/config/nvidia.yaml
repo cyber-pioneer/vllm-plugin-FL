@@ -60,9 +60,10 @@ flagos_blacklist:
   # FlagGems linear autotuning can access invalid memory for dynamic shapes.
   - linear
   # Temporary Qwen3.6 correctness fallback for FlagGems 5.3.4.
-  # Keep both mm entry points native for eager and graph correctness.
-  # Other GEMM, elementwise and fused implementations stay active.
+  # Keep mm/mm_out and mul native for eager and graph correctness.
+  # Other GEMM and fused implementations stay active.
   - mm
   - mm_out
+  - mul
 # OOT (Out-of-Tree) operator blacklist
 # oot_blacklist: []
