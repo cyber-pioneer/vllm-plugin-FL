@@ -53,6 +53,7 @@ def test_dynamic_per_token_quant_propagates_failure_for_dispatch_fallback(
     monkeypatch,
 ):
     monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "1")
+
     def unavailable(_value, *, scale, azp, symmetric):
         raise RuntimeError("FlagGems-vLLM kernel is unavailable")
 
