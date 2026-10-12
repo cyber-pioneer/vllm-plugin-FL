@@ -59,15 +59,9 @@ flagos_blacklist:
   - unfold
   # FlagGems linear autotuning can access invalid memory for dynamic shapes.
   - linear
-  # Temporary correctness fallback for FlagGems 5.3.4: native dense GEMMs
-  # and mul avoid repetitive output in Qwen3.6 multimodal inference.
-  # General flag_gems.enable() and explicit fused operators stay active.
+  # Temporary Qwen3.6 correctness fallback for FlagGems 5.3.4.
+  # Keep mm and mul native; other GEMM and fused implementations stay active.
   - mm
-  - mm_out
-  - addmm
-  - addmm_out
-  - bmm
-  - bmm_out
   - mul
 # OOT (Out-of-Tree) operator blacklist
 # oot_blacklist: []
