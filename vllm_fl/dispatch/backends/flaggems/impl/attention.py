@@ -476,6 +476,11 @@ class AttentionFLImpl(AttentionImpl):
         ### TODO(lms): support quant to int8/int4 each query input and low precision compute
         self.supports_quant_query_input = False
 
+    def _get_descales(self, layer, shape=None):
+        from .attention_utils import attention_descales
+
+        return attention_descales(layer, self.kv_cache_dtype, shape)
+
     def do_kv_cache_update(
         self,
         layer,
@@ -582,6 +587,7 @@ class AttentionFLImpl(AttentionImpl):
             scheduler_metadata = attn_metadata.scheduler_metadata
 
             descale_shape = (cu_seqlens_q.shape[0] - 1, self.num_kv_heads)
+            q_descale, k_descale, v_descale = self._get_descales(layer, descale_shape)
 
             if self.dcp_world_size > 1:
                 self._forward_with_dcp(
@@ -592,9 +598,9 @@ class AttentionFLImpl(AttentionImpl):
                     value_cache,
                     output[:num_actual_tokens],
                     attn_metadata,
-                    q_descale=layer._q_scale.expand(descale_shape),
-                    k_descale=layer._k_scale.expand(descale_shape),
-                    v_descale=layer._v_scale.expand(descale_shape),
+                    q_descale=q_descale,
+                    k_descale=k_descale,
+                    v_descale=v_descale,
                 )
                 return output
             else:
@@ -615,15 +621,16 @@ class AttentionFLImpl(AttentionImpl):
                     softcap=self.logits_soft_cap,
                     scheduler_metadata=scheduler_metadata,
                     fa_version=self.vllm_flash_attn_version,
-                    q_descale=layer._q_scale.expand(descale_shape),
-                    k_descale=layer._k_scale.expand(descale_shape),
-                    v_descale=layer._v_scale.expand(descale_shape),
+                    q_descale=q_descale,
+                    k_descale=k_descale,
+                    v_descale=v_descale,
                     num_splits=0,  # FlagGems does not support num_splits > 0
                     s_aux=None,
                 )
                 return output
 
         # Cascade attention (rare case).
+        q_descale, k_descale, v_descale = self._get_descales(layer)
         cascade_attention(
             output[:num_actual_tokens],
             query[:num_actual_tokens],
@@ -644,9 +651,9 @@ class AttentionFLImpl(AttentionImpl):
             fa_version=self.vllm_flash_attn_version,
             prefix_scheduler_metadata=attn_metadata.prefix_scheduler_metadata,
             suffix_scheduler_metadata=attn_metadata.scheduler_metadata,
-            q_descale=layer._q_scale,
-            k_descale=layer._k_scale,
-            v_descale=layer._v_scale,
+            q_descale=q_descale,
+            k_descale=k_descale,
+            v_descale=v_descale,
             s_aux=None,  ## sink is None
         )
         return output
@@ -767,6 +774,8 @@ class AttentionFLImpl(AttentionImpl):
             self.num_kv_heads,
         )
 
+        q_descale, k_descale, v_descale = self._get_descales(layer, descale_shape)
+
         # Call flash attention directly on Q, K, V tensors
         flash_attn_varlen_func(
             q=query,
@@ -783,9 +792,9 @@ class AttentionFLImpl(AttentionImpl):
             window_size=self.sliding_window,
             softcap=self.logits_soft_cap,
             fa_version=self.vllm_flash_attn_version,
-            q_descale=layer._q_scale.expand(descale_shape),
-            k_descale=layer._k_scale.expand(descale_shape),
-            v_descale=layer._v_scale.expand(descale_shape),
+            q_descale=q_descale,
+            k_descale=k_descale,
+            v_descale=v_descale,
             # num_splits=0,
         )
 

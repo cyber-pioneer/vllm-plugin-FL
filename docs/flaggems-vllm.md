@@ -2,7 +2,7 @@
 
 When enabled, selected FlagGems implementations dispatch fused activation,
 rotary, attention,
-MoE, and gated delta rule operators through FlagGems-vllm. General ATen
+and MoE operators through FlagGems-vllm. General ATen
 registration and RMS normalization continue to use FlagGems. Existing attention
 backend selection is preserved: the default service paths use upstream Triton
 or DeepSeek sparse attention unless FlagGems attention is explicitly selected.
@@ -24,7 +24,9 @@ The release is https://github.com/flagos-ai/FlagGems-vllm/releases/tag/v0.2.0.
 Every hardware platform's CI setup calls the shared installer with its selected
 Python interpreter. It verifies the source commit in `direct_url.json` and keeps
 the existing Torch, Triton, FlagGems, vLLM, and NumPy versions. NVIDIA CI alone
-requires FlagGems 5.4.0 and sets `VLLM_FL_USE_FLAGGEMS_VLLM=1` for all test jobs.
+requires FlagGems 5.4.0 and sets `VLLM_FL_USE_FLAGGEMS_VLLM=1` by default.
+CUDA model gates run the same inference/serving cases in both `0` and `1`
+modes with the same dependencies, retaining the default serving regression.
 The release kernel checks are scoped to NVIDIA CUDA; installing the package does
 not enable these kernels on the other platforms.
 
@@ -63,11 +65,17 @@ DeepSeek-V4-Flash FP8 checkpoints require `--kv-cache-dtype fp8` with this
 vLLM version. The validation used tensor parallel size 4. Add `--enforce-eager`
 for eager mode and omit it for the default graph mode.
 
-The GDN adapters convert vLLM 0.24 V,K state storage to the release chunk and
-short recurrent kernels' K,V storage, and convert returned states back. In-place
-recurrent calls retain the original state tensor. The release large-T recurrent
-kernel already uses V,K physical storage and requires correcting its returned
-shape metadata. These adapters do not replace the upstream Qwen GDN path.
+GDN migration is deferred: model GDN paths and the existing plugin adapters
+remain unchanged. The pinned release has kernel-dependent state layouts;
+converging that public contract belongs in the operator library before a future
+plugin migration.
+
+Standard clamped SwiGLU uses the same dispatcher and selection policy as SiLU
+and GELU. Its public `custom_ops` name remains `silu_and_mul_with_clamp`; the
+replacement also accepts `SiluAndMulWithClamp` as an alias. Unsupported alpha
+and beta values retain the upstream native formula before fused execution.
+MetaX fused FA2 receives no descales for unquantized `auto` KV cache; quantized
+KV cache remains unsupported. A separate MetaX opt-in check validates this path.
 
 NVIDIA compatibility exclusions are loaded automatically from `nvidia.yaml`.
 No deployment blacklist append or CUDA/NCCL workaround is required. Validate

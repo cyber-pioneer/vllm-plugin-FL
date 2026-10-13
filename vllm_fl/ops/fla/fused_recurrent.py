@@ -4,19 +4,10 @@ import torch
 
 from vllm.model_executor.custom_op import CustomOp
 
-import vllm_fl.envs as fl_envs
 from vllm_fl.utils import use_flaggems_op
 
-_USE_FLAGGEMS_VLLM_GDN = (
-    use_flaggems_op("fused_recurrent_gated_delta_rule_fwd")
-    and fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM
-)
-
 if use_flaggems_op("fused_recurrent_gated_delta_rule_fwd"):
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import fused_recurrent_gated_delta_rule_fwd
-    else:
-        from flag_gems.fused.FLA import fused_recurrent_gated_delta_rule_fwd
+    from flag_gems.fused.FLA import fused_recurrent_gated_delta_rule_fwd
 else:
     from vllm.model_executor.layers.fla.ops.fused_recurrent import (
         fused_recurrent_gated_delta_rule_fwd,
@@ -40,16 +31,6 @@ class FusedRecurrentFunction(torch.autograd.Function):
         num_accepted_tokens: torch.Tensor | None = None,
         use_qk_l2norm_in_kernel: bool = False,
     ):
-        # The short/strided release kernels use K,V; its large-T kernel uses V,K.
-        qkv_contiguous = all(
-            x.stride(0) == x.stride(1) + x.stride(2) for x in (q, k, v)
-        )
-        transpose_state = _USE_FLAGGEMS_VLLM_GDN and (
-            q.shape[1] <= 64 or qkv_contiguous
-        )
-        kernel_state = initial_state
-        if transpose_state and initial_state is not None:
-            kernel_state = initial_state.transpose(-1, -2).contiguous()
         o, final_state = fused_recurrent_gated_delta_rule_fwd(
             q=q,
             k=k,
@@ -57,7 +38,7 @@ class FusedRecurrentFunction(torch.autograd.Function):
             g=g.contiguous(),
             beta=beta.contiguous(),
             scale=scale,
-            initial_state=kernel_state,
+            initial_state=initial_state,
             inplace_final_state=inplace_final_state,
             cu_seqlens=cu_seqlens,
             ssm_state_indices=ssm_state_indices,
@@ -65,17 +46,6 @@ class FusedRecurrentFunction(torch.autograd.Function):
             use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
         )
 
-        if _USE_FLAGGEMS_VLLM_GDN and final_state is not None:
-            if transpose_state:
-                final_state = final_state.transpose(-1, -2).contiguous()
-                if inplace_final_state:
-                    initial_state.copy_(final_state)
-                    final_state = initial_state
-            elif not inplace_final_state:
-                # The release allocates K,V metadata for V,K physical storage.
-                final_state = final_state.reshape(
-                    *final_state.shape[:-2], v.shape[-1], k.shape[-1]
-                )
         return o, final_state
 
 
@@ -125,7 +95,7 @@ class FusedRecurrentGatedDeltaRuleOp(CustomOp):
                 Scale factor for the RetNet attention scores.
                 If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
             initial_state (Optional[torch.Tensor]):
-                Initial state of shape `[N, HV, V, K]` for `N` input sequences.
+                Initial state of shape `[N, HV, K, V]` for `N` input sequences.
                 For equal-length input sequences, `N` equals the batch size `B`.
                 Default: `None`.
             inplace_final_state: bool:
@@ -143,7 +113,7 @@ class FusedRecurrentGatedDeltaRuleOp(CustomOp):
             o (torch.Tensor):
                 Outputs of shape `[B, T, HV, V]`.
             final_state (torch.Tensor):
-                Final state of shape `[N, HV, V, K]`.
+                Final state of shape `[N, HV, K, V]`.
         """
         if cu_seqlens is not None and q.shape[0] != 1:
             raise ValueError(

@@ -14,6 +14,7 @@ from vllm_fl.dispatch import CachedOp
 
 _silu_and_mul = CachedOp("silu_and_mul")
 _gelu_and_mul = CachedOp("gelu_and_mul")
+_silu_and_mul_with_clamp = CachedOp("silu_and_mul_with_clamp")
 
 
 @torch.library.custom_op("vllm_fl::silu_and_mul", mutates_args=())
@@ -38,16 +39,8 @@ def _gelu_and_mul_graph_fake(x: torch.Tensor, approximate: str) -> torch.Tensor:
 
 @torch.library.custom_op("vllm_fl::silu_and_mul_with_clamp", mutates_args=())
 def _silu_and_mul_with_clamp_graph(x: torch.Tensor, limit: float) -> torch.Tensor:
-    import vllm_fl.envs as fl_envs
-
-    if not fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        native = SimpleNamespace(swiglu_limit=limit, alpha=1.0, beta=0.0)
-        return SiluAndMulWithClamp.forward_native(native, x)
-
-    from flaggems_vllm import silu_and_mul_with_clamp
-
-    gate, up = x.chunk(2, dim=-1)
-    return silu_and_mul_with_clamp(gate, up, limit)
+    obj = SimpleNamespace(swiglu_limit=limit, alpha=1.0, beta=0.0)
+    return _silu_and_mul_with_clamp(obj, x)
 
 
 @_silu_and_mul_with_clamp_graph.register_fake
@@ -79,7 +72,7 @@ def enable_fused_activations_for_compile(compilation_config) -> None:
             continue
         if any(f"-{alias}" in compilation_config.custom_ops for alias in (op, name)):
             continue
-        selected = f"+{name}"
+        selected = f"+{op if op == 'silu_and_mul_with_clamp' else name}"
         if selected not in compilation_config.custom_ops:
             compilation_config.custom_ops.append(selected)
 
@@ -108,21 +101,24 @@ __all__ = ["SiluAndMulFL", "GeluAndMulFL", "SiluAndMulWithClampFL"]
 
 
 class SiluAndMulWithClampFL(SiluAndMulWithClamp):
-    """Use the fused package for the standard clamped SwiGLU operation."""
+    """Dispatch the standard clamp; preserve the native parameterized formula."""
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        import vllm_fl.envs as fl_envs
-        from vllm_fl.utils import use_flaggems_op
+    @classmethod
+    def enabled(cls) -> bool:
+        from vllm.config import get_cached_compilation_config
 
-        self._use_fused_standard_clamp = (
-            fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM
-            and use_flaggems_op("silu_and_mul_with_clamp")
-            and self.alpha == 1.0
-            and self.beta == 0.0
-        )
+        controls = get_cached_compilation_config().custom_ops
+        names = ("silu_and_mul_with_clamp", "SiluAndMulWithClamp")
+        enabled = any(f"+{name}" in controls for name in names)
+        disabled = any(f"-{name}" in controls for name in names)
+        assert not (enabled and disabled), "Cannot enable and disable clamped SwiGLU"
+        return (cls.default_on() or enabled) and not disabled
 
     def forward_oot(self, x: torch.Tensor) -> torch.Tensor:
-        if not self._use_fused_standard_clamp:
+        # v0.2.0 only implements alpha=1,beta=0. Reject that capability before
+        # entering the fused provider, rather than falling back after execution.
+        if self.alpha != 1.0 or self.beta != 0.0:
             return self.forward_native(x)
-        return _silu_and_mul_with_clamp_graph(x, self.swiglu_limit)
+        if torch.compiler.is_compiling():
+            return _silu_and_mul_with_clamp_graph(x, self.swiglu_limit)
+        return _silu_and_mul_with_clamp(self, x)

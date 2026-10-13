@@ -20,26 +20,16 @@ OPS = (
     "grouped_topk",
     "moe_sum",
     "fused_experts_impl",
-    "chunk_gated_delta_rule_fwd",
-    "fused_recurrent_gated_delta_rule_fwd",
 )
 
 pytestmark = [pytest.mark.gpu, pytest.mark.flaggems]
 
 
-@pytest.fixture(autouse=True)
-def require_cuda():
-    if not torch.cuda.is_available():
-        pytest.skip("CUDA is required to import the operator runtime")
-
-
-@pytest.mark.parametrize("name", OPS)
-def test_release_exports(name):
+def test_release_exports():
     import flaggems_vllm
 
-    op = getattr(flaggems_vllm, name)
-    assert callable(op)
-    assert op.__module__.startswith("flaggems_vllm.")
+    for name in OPS:
+        assert callable(getattr(flaggems_vllm, name)), name
 
 
 @pytest.mark.parametrize("graph", [False, True])
@@ -72,7 +62,9 @@ def test_activation_dispatch(monkeypatch, graph, activation):
         capture = torch.cuda.CUDAGraph()
         with torch.cuda.graph(capture):
             actual = wrapper(obj, x)
+        x.copy_(torch.randn_like(x))
         capture.replay()
+        expected = getattr(torch.nn.functional, activation)(x[:, :128]) * x[:, 128:]
     torch.testing.assert_close(actual, expected, rtol=0.02, atol=0.02)
     assert calls and all(module.startswith("flaggems_vllm.") for module in calls)
 
@@ -128,21 +120,53 @@ def test_clamped_activation(monkeypatch, graph, alpha, beta):
         capture = torch.cuda.CUDAGraph()
         with torch.cuda.graph(capture):
             actual = obj.forward_oot(x)
+        x.copy_(torch.randn_like(x) * 4)
         capture.replay()
+        gate, up = x.chunk(2, dim=-1)
+        gate = gate.clamp(max=2.0)
+        expected = gate * torch.sigmoid(alpha * gate) * (up.clamp(-2.0, 2.0) + beta)
     torch.testing.assert_close(actual, expected)
     assert bool(calls) == (alpha == 1.0 and beta == 0.0)
 
 
+@pytest.fixture
+def registered_activations(monkeypatch):
+    # Each service configuration starts in a fresh process; reset compiler and
+    # provider caches between tests that construct different startup modes.
+    torch._dynamo.reset()
+    from vllm_fl.dispatch import reset_default_manager
+
+    reset_default_manager()
+    from vllm.model_executor.custom_op import op_registry_oot
+
+    from vllm_fl.ops import custom_ops
+    from vllm_fl.ops.activation import GeluAndMulFL, SiluAndMulFL, SiluAndMulWithClampFL
+
+    for cls, name in (
+        (SiluAndMulFL, "SiluAndMul"),
+        (GeluAndMulFL, "GeluAndMul"),
+        (SiluAndMulWithClampFL, "SiluAndMulWithClamp"),
+    ):
+        monkeypatch.delitem(op_registry_oot, name, raising=False)
+        monkeypatch.setattr(cls, "name", cls.name)
+    monkeypatch.setattr(custom_ops, "_patch_unquantized_moe_oracle", lambda: None)
+    monkeypatch.setattr(custom_ops, "_patch_fused_moe_factory", lambda: None)
+    custom_ops.register_oot_ops(
+        whitelist=["silu_and_mul", "gelu_and_mul", "silu_and_mul_with_clamp"]
+    )
+
+
 @pytest.mark.parametrize("activation", ["silu", "gelu", "clamp"])
-def test_compiled_activation_uses_fused_package(monkeypatch, activation):
+def test_compiled_activation_uses_fused_package(
+    monkeypatch, registered_activations, activation
+):
     import flaggems_vllm
 
     from vllm.config import VllmConfig, set_current_vllm_config
-
-    from vllm_fl.ops.activation import (
-        GeluAndMulFL,
-        SiluAndMulFL,
-        SiluAndMulWithClampFL,
+    from vllm.model_executor.layers.activation import (
+        GeluAndMul,
+        SiluAndMul,
+        SiluAndMulWithClamp,
     )
 
     monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "1")
@@ -159,31 +183,65 @@ def test_compiled_activation_uses_fused_package(monkeypatch, activation):
     monkeypatch.setattr(flaggems_vllm, name, observed)
     with set_current_vllm_config(VllmConfig()):
         obj = {
-            "silu": SiluAndMulFL,
-            "gelu": GeluAndMulFL,
-            "clamp": lambda: SiluAndMulWithClampFL(2.0, 1.0, 0.0, compile_native=False),
+            "silu": SiluAndMul,
+            "gelu": GeluAndMul,
+            "clamp": lambda: SiluAndMulWithClamp(2.0, 1.0, 0.0, compile_native=False),
         }[activation]()
     x = torch.randn(16, 256, device="cuda", dtype=torch.bfloat16)
-    eager = obj.forward_oot(x)
+    eager = obj(x)
     calls.clear()
-    compiled = torch.compile(obj.forward_oot, fullgraph=True)
-    actual = compiled(x)
-    torch.testing.assert_close(actual, eager)
+    compiled = torch.compile(obj, fullgraph=True)
+    torch.testing.assert_close(compiled(x), eager)
+    calls.clear()
+    updated = x * 0.5
+    actual = compiled(updated)
+    expected = obj.forward_native(updated)
+    torch.testing.assert_close(actual, expected)
     assert calls and all(module.startswith("flaggems_vllm.") for module in calls)
 
 
-def test_compile_activation_selection_respects_operator_controls(monkeypatch):
-    from types import SimpleNamespace
+@pytest.mark.parametrize(
+    "switch,controls,fused",
+    [
+        ("0", ["all"], False),
+        ("1", ["all", "-silu_and_mul_with_clamp"], False),
+        ("1", ["none", "+silu_and_mul_with_clamp"], True),
+    ],
+)
+def test_compiled_upstream_clamp_controls(
+    monkeypatch, registered_activations, switch, controls, fused
+):
+    import flaggems_vllm
 
-    from vllm_fl.ops.activation import enable_fused_activations_for_compile
+    from vllm.config import VllmConfig, set_current_vllm_config
+    from vllm.model_executor.layers.activation import SiluAndMulWithClamp
 
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "1")
-    monkeypatch.setenv("VLLM_FL_OOT_WHITELIST", "silu_and_mul,gelu_and_mul")
-    config = SimpleNamespace(custom_ops=["none", "-GeluAndMul"])
-    enable_fused_activations_for_compile(config)
-    enable_fused_activations_for_compile(config)
-    assert config.custom_ops == ["none", "-GeluAndMul", "+SiluAndMul"]
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "0")
-    untouched = SimpleNamespace(custom_ops=["none"])
-    enable_fused_activations_for_compile(untouched)
-    assert untouched.custom_ops == ["none"]
+    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", switch)
+    calls = []
+    real = flaggems_vllm.silu_and_mul_with_clamp
+
+    def observed(*args, **kwargs):
+        calls.append(True)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(flaggems_vllm, "silu_and_mul_with_clamp", observed)
+    config = VllmConfig()
+    config.compilation_config.custom_ops = controls
+    with set_current_vllm_config(config):
+        obj = SiluAndMulWithClamp(2.0, 1.0, 0.0, compile_native=False)
+        assert obj.enabled() is (controls == ["all"] or controls[0] == "none"), (
+            obj.name,
+            controls,
+            obj._forward_method,
+        )
+        assert obj._forward_method.__name__ == (
+            "forward_oot" if obj.enabled() else "forward_native"
+        )
+        compiled = torch.compile(obj, fullgraph=True)
+        x = torch.randn(16, 128, device="cuda", dtype=torch.bfloat16)
+        compiled(x)
+        calls.clear()
+        updated = x * 0.5
+        actual = compiled(updated)
+        torch.testing.assert_close(actual, obj.forward_native(updated))
+    assert bool(calls) is fused

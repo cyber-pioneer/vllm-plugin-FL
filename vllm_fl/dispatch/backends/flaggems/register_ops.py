@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 
+import vllm_fl.envs as fl_envs
 from vllm_fl.dispatch.types import BackendImplKind, BackendPriority, OpImpl
 from vllm_fl.utils import use_flaggems_op
 
@@ -77,6 +78,16 @@ def register_builtins(registry) -> None:
             kind=BackendImplKind.DEFAULT,
             fn=_bind_is_available(backend.gelu_and_mul, is_avail),
             vendor=None,
+            priority=BackendPriority.DEFAULT,
+        ),
+        OpImpl(
+            op_name="silu_and_mul_with_clamp",
+            impl_id="default.flagos",
+            kind=BackendImplKind.DEFAULT,
+            fn=_bind_is_available(
+                backend.silu_and_mul_with_clamp,
+                lambda: is_avail() and fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM,
+            ),
             priority=BackendPriority.DEFAULT,
         ),
         # Normalization

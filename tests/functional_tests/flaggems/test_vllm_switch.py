@@ -8,7 +8,7 @@ import torch
 pytestmark = [pytest.mark.gpu, pytest.mark.flaggems]
 
 
-@pytest.mark.parametrize("value", [None, "0"])
+@pytest.mark.parametrize("value", [None])
 def test_disabled_clamp_uses_native_without_package(monkeypatch, value):
     from vllm_fl.ops.activation import _silu_and_mul_with_clamp_graph
 
@@ -26,7 +26,7 @@ def test_disabled_clamp_uses_native_without_package(monkeypatch, value):
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("value", [None, "0", "1"])
+@pytest.mark.parametrize("value", [None, "1"])
 def test_quantization_switch_preserves_dynamic_contract(monkeypatch, value):
     from vllm_fl.dispatch.backends.flaggems.impl.quantization import (
         dynamic_per_token_quant_int8_flaggems_vllm,

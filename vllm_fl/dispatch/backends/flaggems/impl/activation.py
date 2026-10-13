@@ -52,3 +52,14 @@ def gelu_and_mul_flaggems(obj, x: torch.Tensor) -> torch.Tensor:
     d = x.shape[-1] // 2
     x1, x2 = x[..., :d], x[..., d:]
     return gelu_and_mul(x1, x2, approximate)
+
+
+def silu_and_mul_with_clamp_flaggems(obj, x: torch.Tensor) -> torch.Tensor:
+    if not fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from vllm.model_executor.layers.activation import SiluAndMulWithClamp
+
+        return SiluAndMulWithClamp.forward_native(obj, x)
+    from flaggems_vllm import silu_and_mul_with_clamp
+
+    gate, up = x.chunk(2, dim=-1)
+    return silu_and_mul_with_clamp(gate, up, obj.swiglu_limit)

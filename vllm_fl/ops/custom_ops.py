@@ -124,6 +124,10 @@ def register_oot_ops(whitelist: list[str] | None = None) -> None:
             )
         else:
             CustomOp.register_oot(_decorated_op_cls=op_cls, name=registration_name)
+            if op_name == "silu_and_mul_with_clamp":
+                # The OOT lookup key is a class name; public controls use the
+                # upstream snake_case name. The replacement accepts both aliases.
+                op_cls.name = op_name
 
     # Apply platform-specific monkey-patches unconditionally (outside the OOT
     # registration loop) so they run even when the whitelist is empty or all ops

@@ -1,26 +1,16 @@
 # Copyright (c) 2025 BAAI. All rights reserved.
 
-import os
 import warnings
-
+import os
 import torch
 
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.fla.ops.l2norm import l2norm_fwd
-
-import vllm_fl.envs as fl_envs
 from .utils import input_guard
 from vllm_fl.utils import use_flaggems_op
 
-_USE_FLAGGEMS_VLLM_GDN = (
-    use_flaggems_op("chunk_gated_delta_rule_fwd") and fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM
-)
-
 if use_flaggems_op("chunk_gated_delta_rule_fwd"):
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import chunk_gated_delta_rule_fwd
-    else:
-        from flag_gems.fused.FLA import chunk_gated_delta_rule_fwd
+    from flag_gems.fused.FLA import chunk_gated_delta_rule_fwd
 else:
     from vllm.model_executor.layers.fla.ops.chunk import chunk_gated_delta_rule_fwd
 
@@ -45,10 +35,6 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             q = l2norm_fwd(q)
             k = l2norm_fwd(k)
 
-        # vLLM 0.24 uses [N, H, V, K]; the release kernels use [N, H, K, V].
-        kernel_state = initial_state
-        if _USE_FLAGGEMS_VLLM_GDN and initial_state is not None:
-            kernel_state = initial_state.transpose(-1, -2).contiguous()
         g, o, A, final_state, w, h, v_new = chunk_gated_delta_rule_fwd(
             q=q,
             k=k,
@@ -56,12 +42,10 @@ class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
             g=g,
             beta=beta,
             scale=scale,
-            initial_state=kernel_state,
+            initial_state=initial_state,
             output_final_state=output_final_state,
             cu_seqlens=cu_seqlens,
         )
-        if _USE_FLAGGEMS_VLLM_GDN and final_state is not None:
-            final_state = final_state.transpose(-1, -2).contiguous()
         ctx.scale = scale
         ctx.use_qk_l2norm_in_kernel = use_qk_l2norm_in_kernel
         return o.to(q.dtype), final_state
@@ -77,7 +61,7 @@ class ChunkGatedDeltaRuleOp(CustomOp):
         r"""
         Args:
         output_final_state (Optional[bool]):
-                Whether to output the final state of shape `[N, H, V, K]`. Default: `False`.
+                Whether to output the final state of shape `[N, H, K, V]`. Default: `False`.
         """
         super().__init__()
         self.output_final_state = output_final_state
@@ -111,7 +95,7 @@ class ChunkGatedDeltaRuleOp(CustomOp):
                 Scale factor for the RetNet attention scores.
                 If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
             initial_state (Optional[torch.Tensor]):
-                Initial state of shape `[N, H, V, K]` for `N` input sequences.
+                Initial state of shape `[N, H, K, V]` for `N` input sequences.
                 For equal-length input sequences, `N` equals the batch size `B`.
                 Default: `None`.
             cu_seqlens (torch.LongTensor):
@@ -122,7 +106,7 @@ class ChunkGatedDeltaRuleOp(CustomOp):
             o (torch.Tensor):
                 Outputs of shape `[B, T, H, V]`.
             final_state (torch.Tensor):
-                Final state of shape `[N, H, V, K]` if `output_final_state=True` else `None`.
+                Final state of shape `[N, H, K, V]` if `output_final_state=True` else `None`.
         """
         assert q.dtype == k.dtype == v.dtype
         assert q.dtype != torch.float32, (

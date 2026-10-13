@@ -5,7 +5,6 @@ import pytest
 import torch
 
 CUDA_RELEASE_TESTS = {
-    "test_gdn_layout.py",
     "test_vllm_package.py",
     "test_vllm_switch.py",
 }
