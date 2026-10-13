@@ -8,27 +8,13 @@ git config --global --add safe.directory "$(pwd)"
 uv pip install --system --break-system-packages --upgrade pip
 
 # Existing CI images may contain an older FlagGems release.
-if ! python3 - <<'PY'
-from importlib.metadata import PackageNotFoundError, version
-
-try:
-    installed = version("flag-gems")
-except PackageNotFoundError:
-    installed = None
-raise SystemExit(installed != "5.4.0")
-PY
-then
+if ! python3 .github/scripts/cuda/check_flaggems.py; then
     uv pip install --system --break-system-packages --no-build-isolation --no-deps \
         "flag-gems @ git+https://github.com/flagos-ai/FlagGems.git@v5.4.0"
 fi
 
-# GPU functional tests cover the optional fused package in both switch states.
-uv pip install --system --break-system-packages --no-build-isolation -e ".[test,flaggems-vllm]"
+uv pip install --system --break-system-packages --no-build-isolation -e ".[test]"
 
-python3 - <<'PY'
-from importlib.metadata import version
+python3 .github/scripts/install_flaggems_vllm.py
 
-installed = version("flag-gems")
-assert installed == "5.4.0", f"CUDA CI requires FlagGems 5.4.0, found {installed}"
-print(f"FlagGems: {installed}")
-PY
+python3 .github/scripts/cuda/check_flaggems.py

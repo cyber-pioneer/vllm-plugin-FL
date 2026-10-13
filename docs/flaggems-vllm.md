@@ -10,14 +10,23 @@ or DeepSeek sparse attention unless FlagGems attention is explicitly selected.
 Install the pinned release source along with the plugin:
 
 ```bash
-python3 -m pip install --no-build-isolation -e '.[flaggems-vllm]'
+python3 -m pip install --no-deps --force-reinstall \
+  'flaggems-vllm @ git+https://github.com/flagos-ai/FlagGems-vllm.git@b5c2c2249319277ccda4d41aa0f65164bd9b2a19'
+python3 -m pip install --no-build-isolation -e .
 ```
 
-The optional extra pins the v0.2.0 release commit
+CI installs the v0.2.0 release commit
 `b5c2c2249319277ccda4d41aa0f65164bd9b2a19`. That release still declares
 `0.1.0` in its package metadata and `__version__`; verify its source commit or
 pip's `direct_url.json` instead of interpreting the metadata as the release tag.
 The release is https://github.com/flagos-ai/FlagGems-vllm/releases/tag/v0.2.0.
+
+Every hardware platform's CI setup calls the shared installer with its selected
+Python interpreter. It verifies the source commit in `direct_url.json` and keeps
+the existing Torch, Triton, FlagGems, vLLM, and NumPy versions. NVIDIA CI alone
+requires FlagGems 5.4.0 and sets `VLLM_FL_USE_FLAGGEMS_VLLM=1` for all test jobs.
+The release kernel checks are scoped to NVIDIA CUDA; installing the package does
+not enable these kernels on the other platforms.
 
 FlagGems-vllm integration is disabled by default, even when the package is
 installed. Set `VLLM_FL_USE_FLAGGEMS_VLLM=1` before starting vLLM to enable it.
