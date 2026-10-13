@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 if __package__:
+    from .eager_reference import (
+        DETAIL_REFERENCE_FIELDS,
+        OPERATOR_REFERENCE_FIELDS,
+        attach_eager_reference,
+        load_eager_reference,
+    )
     from .rule.rule_map import (
         OperatorIdentity,
         kernel_callable_identity_name,
@@ -22,6 +28,12 @@ if __package__:
         staged_kernel_family_name,
     )
 else:
+    from eager_reference import (
+        DETAIL_REFERENCE_FIELDS,
+        OPERATOR_REFERENCE_FIELDS,
+        attach_eager_reference,
+        load_eager_reference,
+    )
     from rule.rule_map import (
         OperatorIdentity,
         kernel_callable_identity_name,
@@ -696,7 +708,7 @@ def validate_csv_outputs(
     expected_operator_rows = operator_list_rows(summary_rows)
     normalized_operator_rows = [
         {
-            **row,
+            **{key: row[key] for key in expected_operator_rows[0]},
             "operator_id": (
                 row["operator_id"]
                 if row["operator_id"] == "null"
@@ -843,7 +855,20 @@ def main() -> None:
     parser.add_argument("--runtime", required=True, type=Path)
     parser.add_argument("--rank", type=int, default=0)
     parser.add_argument("--output-dir", required=True, type=Path)
+    parser.add_argument(
+        "--eager-reference",
+        type=Path,
+        help="same-environment eager results directory; references only, not timing",
+    )
     args = parser.parse_args()
+    eager_index = None
+    eager_summary = None
+    if args.eager_reference is not None:
+        if args.eager_reference.resolve() == args.output_dir.resolve():
+            raise ValueError("eager reference must differ from the output directory")
+        eager_index, eager_summary = load_eager_reference(
+            args.eager_reference, args.rank
+        )
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     runtime_files = [
@@ -871,6 +896,13 @@ def main() -> None:
     summary_rows = summary_csv_rows(
         kernel_report, round(summary["kernel_time_total_us"] * 1000)
     )
+    operator_rows = operator_list_rows(summary_rows)
+    detail_rows = details_csv_rows(kernel_report)
+    if eager_index is not None:
+        operator_rows, detail_rows, reference_counts = attach_eager_reference(
+            operator_rows, detail_rows, eager_index
+        )
+        summary["eager_reference"] = {**eager_summary, **reference_counts}
     write_csv(
         kernel_time_path,
         [
@@ -894,8 +926,9 @@ def main() -> None:
             "candidate_operators",
             "kernel_event_count",
             "kernel_time_us",
-        ],
-        details_csv_rows(kernel_report),
+        ]
+        + (DETAIL_REFERENCE_FIELDS if eager_index is not None else []),
+        detail_rows,
     )
     write_csv(
         operator_list_path,
@@ -905,8 +938,9 @@ def main() -> None:
             "operator_kind",
             "kernel_name",
             "kernel_time_percent(%)",
-        ],
-        operator_list_rows(summary_rows),
+        ]
+        + (OPERATOR_REFERENCE_FIELDS if eager_index is not None else []),
+        operator_rows,
     )
     summary["conservation"].update(
         validate_csv_outputs(

@@ -131,6 +131,49 @@ verified kernel-family rule applies. Triton compiled kernels remain distinct.
 The full kernel name is always retained in the CSV, so grouping does not drop
 kernel events, shapes, calls, or time.
 
+## Optional eager references for graph results
+
+Supply the results of an eager run from the same model, implementation
+(native or plugin), GPU platform, software versions, and relevant serving
+configuration. Only the execution mode should differ. Historical result files
+do not contain a complete environment manifest, so the caller must verify this
+condition; the extractor checks rank and runtime scope and records the source
+CSV checksum. It does not automatically select or verify an environment.
+
+For an existing graph trace:
+
+```bash
+python3 tools/operator_profile/extract_operator_shapes.py \
+  --runtime /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/profile \
+  --rank 0 \
+  --output-dir /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/results \
+  --eager-reference /workspace/op_profile/qwen3.6_35b_a3b_plugin_eager_4096_256/results
+```
+
+For a new graph profile, pass the eager results directory as the third argument
+to `profile.sh`.
+
+Matching uses the exact full kernel name, including template parameters.
+Inductor-generated `triton_poi_*`, `triton_red_*`, `triton_per_*`, and
+`triton_for_*` kernels are excluded from reference matching. Handwritten
+Triton kernels remain eligible. No capture data or graph-name fallback is added.
+
+`operator_list.csv` retains its original API, kind, operator IDs, and time
+shares. Rows needing metadata have `mapping_source=eager-refer` when eager
+candidates exist. `eager_operator_name` contains a unique reference API or
+`null`; `eager_api_candidates` preserves all candidate APIs, and
+`eager_shape_dtype_count` reports the number of distinct reference shape/dtype
+pairs. The API may identify a parent wrapper rather than the kernel's exact
+internal computation.
+
+`kernel_shape_dtype.csv` retains the original graph mapping status and inputs.
+Extra `eager_input_shapes` and `eager_input_dtypes` contain only unique reference
+values for missing fields; multiple values remain `null`.
+`eager_candidates` keeps paired API/shape/dtype candidates so that unrelated
+inputs are never combined. References do not increase direct graph coverage.
+`kernel_time.csv`, runtime event counts, and durations are unchanged. Omitting
+`--eager-reference` preserves the original output format.
+
 Add an exceptional specialization to `KERNEL_GROUPING_RULES` with a named
 `match` and `key` lambda. `kernel_signature()` exposes the callable symbol and
 top-level template arguments without splitting nested C++ types. Keep semantic

@@ -1,4 +1,5 @@
 import csv
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -6,6 +7,10 @@ from types import ModuleType
 
 import pytest
 
+from tools.operator_profile.eager_reference import (
+    attach_eager_reference,
+    load_eager_reference,
+)
 from tools.operator_profile.extract_operator_shapes import (
     format_operator_time_percent,
     operator_list_rows,
@@ -507,3 +512,190 @@ def test_operator_without_decisive_evidence_has_empty_coverage_fields():
     assert decision.covered is None
     assert decision.flagos_type == ""
     assert decision.evidence == "insufficient evidence to determine FlagOS coverage"
+
+
+def eager_detail(kernel, operator, shapes, dtypes):
+    return {
+        "operator_name": operator,
+        "kernel_name": kernel,
+        "mapping_status": "operator_shape_matched",
+        "input_shapes": json.dumps(shapes),
+        "input_dtypes": json.dumps(dtypes),
+        "kernel_event_count": 1,
+        "kernel_time_us": 2.0,
+    }
+
+
+def write_eager_results(path, rows, rank=0):
+    path.mkdir()
+    (path / "summary.json").write_text(
+        json.dumps(
+            {"scope": {"rank": rank, "phase": "runtime_only"}, "conservation": {}}
+        ),
+        encoding="utf-8",
+    )
+    with (path / "kernel_shape_dtype.csv").open("w", newline="") as target:
+        writer = csv.DictWriter(target, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def test_eager_reference_keeps_ambiguous_api_and_shape_candidates(tmp_path):
+    results = tmp_path / "eager"
+    write_eager_results(
+        results,
+        [
+            eager_detail("shared_kernel", "aten::zeros", [[4]], ["float"]),
+            eager_detail("shared_kernel", "aten::zero_", [[8]], ["bf16"]),
+        ],
+    )
+    index, provenance = load_eager_reference(results, 0)
+    original = eager_detail("shared_kernel", "null", None, None)
+    original["mapping_status"] = "missing_external_id"
+    operators, details, stats = attach_eager_reference(
+        [{"operator_name": "null", "kernel_name": "shared_kernel", "operator_id": 7}],
+        [original],
+        index,
+    )
+    assert operators[0]["operator_id"] == 7
+    assert operators[0]["eager_operator_name"] == "null"
+    assert json.loads(operators[0]["eager_api_candidates"]) == [
+        "aten::zero_",
+        "aten::zeros",
+    ]
+    assert operators[0]["eager_shape_dtype_count"] == 2
+    assert details[0]["eager_input_shapes"] == "null"
+    assert details[0]["eager_input_dtypes"] == "null"
+    candidates = json.loads(details[0]["eager_candidates"])
+    assert {
+        (row["operator_name"], tuple(row["input_shapes"][0]), row["input_dtypes"][0])
+        for row in candidates
+    } == {("aten::zeros", (4,), "float"), ("aten::zero_", (8,), "bf16")}
+    assert all(details[0][key] == value for key, value in original.items())
+    assert details[0]["mapping_source"] == provenance["source"] == "eager-refer"
+    assert stats["events_with_reference_candidates"] == 1
+
+
+def test_eager_reference_matches_full_name_and_preserves_known_api(tmp_path):
+    results = tmp_path / "eager"
+    write_eager_results(
+        results,
+        [
+            eager_detail(
+                "void backend::kernel<1>(float*)", "aten::add", [[4]], ["float"]
+            ),
+            eager_detail("shared_kernel", "aten::zeros", [[4]], ["float"]),
+            eager_detail("shared_kernel", "aten::zero_", [[8]], ["float"]),
+            eager_detail("triton_poi_fused_add_0", "aten::add", [[4]], ["float"]),
+            eager_detail("triton_handwritten_add", "aten::add", [[4]], ["float"]),
+        ],
+    )
+    index, _ = load_eager_reference(results, 0)
+    details = [
+        eager_detail("void backend::kernel<2>(float*)", "null", None, None),
+        eager_detail("shared_kernel", "aten::zeros", None, None),
+        eager_detail("shared_kernel", "aten::mul", None, None),
+        eager_detail("triton_poi_fused_add_0", "null", None, None),
+        eager_detail("triton_handwritten_add", "null", None, None),
+    ]
+    _, actual, _ = attach_eager_reference([], details, index)
+    assert [row["mapping_source"] for row in actual] == [
+        "null",
+        "eager-refer",
+        "null",
+        "null",
+        "eager-refer",
+    ]
+    assert json.loads(actual[1]["eager_input_shapes"]) == [[4]]
+    assert actual[1]["eager_operator_name"] == "aten::zeros"
+
+
+def test_eager_reference_rejects_other_rank(tmp_path):
+    results = tmp_path / "eager"
+    write_eager_results(
+        results, [eager_detail("kernel", "aten::add", [[4]], ["float"])], rank=1
+    )
+    with pytest.raises(ValueError, match="same rank"):
+        load_eager_reference(results, 0)
+
+
+def test_extractor_eager_reference_preserves_graph_outputs(tmp_path):
+    eager = tmp_path / "eager"
+    write_eager_results(
+        eager,
+        [
+            eager_detail("copy_kernel", "aten::copy_", [[4]], ["float"]),
+            eager_detail("copy_kernel", "aten::copy_", [[8]], ["float"]),
+        ],
+    )
+    trace = tmp_path / "rank0.pt.trace.json"
+    trace.write_text(
+        json.dumps(
+            {
+                "traceEvents": [
+                    {
+                        "cat": "cpu_op",
+                        "name": "aten::copy_",
+                        "args": {
+                            "External id": 1,
+                            "Input Dims": [[2]],
+                            "Input type": ["float"],
+                        },
+                    },
+                    {
+                        "cat": "kernel",
+                        "name": "copy_kernel",
+                        "dur": 1,
+                        "args": {"External id": 1},
+                    },
+                    {"cat": "kernel", "name": "copy_kernel", "dur": 2},
+                    {"cat": "kernel", "name": "unknown_kernel", "dur": 3},
+                    {"cat": "kernel", "name": "triton_poi_fused_add_0", "dur": 4},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "tools/operator_profile/extract_operator_shapes.py"
+    )
+    plain = tmp_path / "plain"
+    enriched = tmp_path / "enriched"
+    for output in [plain, enriched]:
+        command = [
+            sys.executable,
+            str(script),
+            "--runtime",
+            str(trace),
+            "--output-dir",
+            str(output),
+        ]
+        if output == enriched:
+            command += ["--eager-reference", str(eager)]
+        subprocess.run(command, check=True, capture_output=True, text=True)
+    assert (plain / "kernel_time.csv").read_bytes() == (
+        enriched / "kernel_time.csv"
+    ).read_bytes()
+    for name in ["operator_list.csv", "kernel_shape_dtype.csv"]:
+        with (plain / name).open() as source:
+            original = list(csv.DictReader(source))
+        with (enriched / name).open() as source:
+            actual = list(csv.DictReader(source))
+        assert len(original) == len(actual)
+        assert all(
+            {key: new[key] for key in old} == old for old, new in zip(original, actual)
+        )
+        assert all(
+            row["mapping_source"] == "null"
+            for row in actual
+            if row["kernel_name"] != "copy_kernel"
+        )
+    summary = json.loads((enriched / "summary.json").read_text())
+    assert summary["kernel_event_count"] == 4
+    assert summary["kernel_time_total_us"] == 10
+    assert all(
+        value for value in summary["conservation"].values() if isinstance(value, bool)
+    )
+    assert summary["eager_reference"]["referenced_kernel_count"] == 1
+    assert summary["eager_reference"]["events_with_reference_candidates"] == 1
