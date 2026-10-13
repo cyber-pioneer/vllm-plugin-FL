@@ -22,7 +22,8 @@ then
         "flag-gems @ git+https://github.com/flagos-ai/FlagGems.git@v5.4.0"
 fi
 
-uv pip install --system --break-system-packages --no-build-isolation -e ".[test]"
+# GPU functional tests cover the optional fused package in both switch states.
+uv pip install --system --break-system-packages --no-build-isolation -e ".[test,flaggems-vllm]"
 
 python3 - <<'PY'
 from importlib.metadata import version
