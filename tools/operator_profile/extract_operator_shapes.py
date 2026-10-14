@@ -883,7 +883,7 @@ def validate_csv_outputs(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--runtime", required=True, type=Path)
+    parser.add_argument("--trace-dir", required=True, type=Path)
     parser.add_argument("--rank", type=int, default=0)
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument(
@@ -904,12 +904,12 @@ def main() -> None:
 
     runtime_files = [
         file
-        for file in runtime_trace_files(args.runtime)
+        for file in runtime_trace_files(args.trace_dir)
         if rank_in_filename(file) == args.rank
     ]
     if not runtime_files:
         raise FileNotFoundError(
-            f"no rank-{args.rank} runtime profiler traces under {args.runtime}"
+            f"no rank-{args.rank} runtime profiler traces under {args.trace_dir}"
         )
 
     kernel_summary, kernel_report, summary = collect_runtime(runtime_files, args.rank)

@@ -144,8 +144,7 @@ For an existing graph trace:
 
 ```bash
 python3 tools/operator_profile/extract_operator_shapes.py \
-  --runtime /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/profile \
-  --rank 0 \
+  --trace-dir /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/profile \
   --output-dir /workspace/op_profile/qwen3.6_35b_a3b_plugin_graph_4096_256/results \
   --eager-reference /workspace/op_profile/qwen3.6_35b_a3b_plugin_eager_4096_256/results
 ```

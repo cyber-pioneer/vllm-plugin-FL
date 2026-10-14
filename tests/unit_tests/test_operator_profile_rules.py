@@ -761,7 +761,7 @@ def test_extractor_merges_unique_eager_aten_and_preserves_runtime_details(tmp_pa
         [
             sys.executable,
             str(script),
-            "--runtime",
+            "--trace-dir",
             str(trace),
             "--output-dir",
             str(output),
@@ -845,7 +845,7 @@ def test_extractor_eager_reference_preserves_graph_outputs(tmp_path):
         command = [
             sys.executable,
             str(script),
-            "--runtime",
+            "--trace-dir",
             str(trace),
             "--output-dir",
             str(output),

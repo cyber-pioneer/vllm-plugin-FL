@@ -75,8 +75,7 @@ if [[ "$#" -eq 3 ]]; then
   reference_args=(--eager-reference "$3")
 fi
 python3 "$TOOL_DIR/extract_operator_shapes.py" \
-  --runtime "$PROFILE_DIR" \
-  --rank 0 \
+  --trace-dir "$PROFILE_DIR" \
   --output-dir "$RESULT_DIR" \
   "${reference_args[@]}"
 
