@@ -76,6 +76,11 @@ replacement also accepts `SiluAndMulWithClamp` as an alias. Unsupported alpha
 and beta values retain the upstream native formula before fused execution.
 MetaX fused FA2 receives no descales for unquantized `auto` KV cache; quantized
 KV cache remains unsupported. A separate MetaX opt-in check validates this path.
+When MetaX's existing Triton lacks the optional TLE API, the plugin omits the
+release's `persistent_topk` vendor export from its eager operator collection.
+The compatibility loader verifies the pinned release's initializer hash;
+attention and all remaining vendor imports execute unchanged. Installed package
+files and the platform's Triton version are not modified.
 
 NVIDIA compatibility exclusions are loaded automatically from `nvidia.yaml`.
 No deployment blacklist append or CUDA/NCCL workaround is required. Validate
