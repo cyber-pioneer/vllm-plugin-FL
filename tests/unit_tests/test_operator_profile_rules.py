@@ -677,6 +677,127 @@ def test_eager_inventory_labels_only_unattributed_rows():
     assert rows[5]["operator_kind"] == "unattributed"
 
 
+def test_operator_list_merges_direct_and_unique_eager_aten_before_rounding():
+    index = {
+        kernel: [{"operator_name": "aten::mul"}]
+        for kernel in ["mul_kernel", "other_mul_kernel"]
+    }
+    rows = operator_list_rows(
+        [
+            {"operator_name": api, "kernel_name": kernel, "kernel_time_us": time}
+            for api, kernel, time in [
+                ("aten::mul", "mul_kernel", 0.006),
+                ("null", "mul_kernel", 0.006),
+                ("null", "other_mul_kernel", 0.002),
+                ("aten::add", "add_kernel", 99.986),
+            ]
+        ],
+        index,
+    )
+    mul_rows = [row for row in rows if row["operator_name"] == "aten::mul"]
+    assert len(mul_rows) == 2
+    assert {row["operator_id"] for row in mul_rows} == {2}
+    assert mul_rows[0]["operator_kind"] == "aten"
+    assert mul_rows[0]["kernel_time_percent(%)"] == "0.01"
+    assert mul_rows[1]["operator_kind"] == "eager-refer"
+    assert {row["operator_id"] for row in rows} == {1, 2}
+
+
+def test_operator_list_preserves_ambiguous_eager_and_custom_identities():
+    index = {
+        "ambiguous_kernel": [
+            {"operator_name": "aten::mul"},
+            {"operator_name": "aten::add"},
+        ],
+        "custom_first": [{"operator_name": "extension::wrapper"}],
+        "custom_second": [{"operator_name": "extension::wrapper"}],
+    }
+    rows = operator_list_rows(
+        [
+            {"operator_name": api, "kernel_name": kernel, "kernel_time_us": 1}
+            for api, kernel in [
+                ("aten::mul", "mul_kernel"),
+                ("null", "ambiguous_kernel"),
+                ("null", "custom_first"),
+                ("null", "custom_second"),
+            ]
+        ],
+        index,
+    )
+    assert len({row["operator_id"] for row in rows}) == 4
+    assert rows[0]["operator_name"] == "aten::mul"
+    assert {row["operator_kind"] for row in rows[1:]} == {"eager-refer"}
+
+
+def test_extractor_merges_unique_eager_aten_and_preserves_runtime_details(tmp_path):
+    eager = tmp_path / "eager"
+    write_eager_results(
+        eager, [eager_detail("mul_kernel", "aten::mul", [[4]], ["float"])]
+    )
+    trace = tmp_path / "rank0.pt.trace.json"
+    trace.write_text(
+        json.dumps(
+            {
+                "traceEvents": [
+                    {"cat": "cpu_op", "name": "aten::mul", "args": {"External id": 1}},
+                    {
+                        "cat": "kernel",
+                        "name": "mul_kernel",
+                        "dur": 1,
+                        "args": {"External id": 1},
+                    },
+                    {"cat": "kernel", "name": "mul_kernel", "dur": 2},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    script = (
+        Path(__file__).resolve().parents[2]
+        / "tools/operator_profile/extract_operator_shapes.py"
+    )
+    output = tmp_path / "graph"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--runtime",
+            str(trace),
+            "--output-dir",
+            str(output),
+            "--eager-reference",
+            str(eager),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    with (output / "operator_list.csv").open() as source:
+        rows = list(csv.DictReader(source))
+    assert rows == [
+        {
+            "operator_id": "1",
+            "operator_name": "aten::mul",
+            "operator_kind": "aten",
+            "kernel_name": "mul_kernel",
+            "kernel_time_percent(%)": "100.00",
+        }
+    ]
+    with (output / "kernel_shape_dtype.csv").open() as source:
+        details = list(csv.DictReader(source))
+    assert len(details) == 2
+    assert any(
+        row["operator_name"] == "null" and row["mapping_source"] == "eager-refer"
+        for row in details
+    )
+    summary = json.loads((output / "summary.json").read_text())
+    assert summary["kernel_event_count"] == 2
+    assert summary["kernel_time_total_us"] == 3
+    assert all(
+        value for value in summary["conservation"].values() if isinstance(value, bool)
+    )
+
+
 def test_extractor_eager_reference_preserves_graph_outputs(tmp_path):
     eager = tmp_path / "eager"
     write_eager_results(

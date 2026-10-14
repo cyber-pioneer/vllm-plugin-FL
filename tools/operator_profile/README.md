@@ -165,9 +165,14 @@ exist, `operator_kind` becomes `eager-refer` and `operator_name` contains the
 sorted, deduplicated API names joined by commas, without JSON brackets. For
 example, `aten::zero_,aten::zeros` means both APIs are candidates, not that both
 executed. CSV quoting keeps multiple names in one cell. Without candidates,
-the row remains `unattributed`. Other kinds, operator IDs, kernel grouping,
-row order, and time shares are unchanged. A reference API may identify a
-parent wrapper rather than the kernel's exact internal computation.
+the row remains `unattributed`. A unique ATen candidate shares an `operator_id`
+with direct mappings of the same API. Rows with the same API and full kernel
+name are merged using their unrounded runtime durations before calculating
+the time share; a direct mapping takes precedence over an eager label.
+Reference-only rows keep `eager-refer`. Ambiguous API candidates are not merged
+with individual APIs. IDs are reassigned consecutively, with ATen APIs first.
+The detail report retains reference provenance for merged rows. A reference
+API may identify a parent wrapper rather than the exact internal computation.
 
 `kernel_shape_dtype.csv` retains the original graph mapping status and inputs.
 Extra `eager_input_shapes` and `eager_input_dtypes` contain only unique reference

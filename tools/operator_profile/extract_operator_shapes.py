@@ -536,7 +536,30 @@ def summary_csv_rows(
     ]
 
 
-def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def inventory_descriptor(
+    source_name: str,
+    kernel_name: str,
+    eager_index: dict[str, list[dict[str, Any]]] | None = None,
+) -> tuple[str, str, OperatorIdentity]:
+    name, kind, identity = operator_descriptor(source_name, kernel_name)
+    if eager_index is None or kind != "unattributed":
+        return name, kind, identity
+    row = reference_operator_rows(
+        [{"operator_name": name, "operator_kind": kind, "kernel_name": kernel_name}],
+        eager_index,
+    )[0]
+    name, kind = row["operator_name"], row["operator_kind"]
+    # Only a unique ATen API can share the identity of a direct ATen mapping.
+    # Ambiguous candidates and custom kernel identities must remain separate.
+    if kind == "eager-refer" and name.startswith("aten::") and "," not in name:
+        identity = operator_descriptor(name, kernel_name)[2]
+    return name, kind, identity
+
+
+def operator_list_rows(
+    summary_rows: list[dict[str, Any]],
+    eager_index: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
     custom_apis_by_kernel: dict[str, set[str]] = defaultdict(set)
     for summary_row in summary_rows:
         source_name = summary_row["operator_name"]
@@ -558,8 +581,8 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
         matching_apis = custom_apis_by_kernel[kernel_name]
         if source_name == "null" and len(matching_apis) == 1:
             source_name = next(iter(matching_apis))
-        operator_name, operator_kind, identity = operator_descriptor(
-            source_name, kernel_name
+        operator_name, operator_kind, identity = inventory_descriptor(
+            source_name, kernel_name, eager_index
         )
         if identity[0] == "kernel_family" and operator_name != "null":
             known_apis_by_family[identity].add(operator_name)
@@ -602,6 +625,7 @@ def operator_list_rows(summary_rows: list[dict[str, Any]]) -> list[dict[str, Any
         operator_name, operator_kind = min(
             operator_descriptors,
             key=lambda descriptor: (
+                descriptor[1] == "eager-refer",
                 descriptor[0] == "null",
                 descriptor[0],
                 descriptor[1],
@@ -706,16 +730,7 @@ def validate_csv_outputs(
         (row["operator_name"], row["operator_kind"], row["kernel_name"])
         for row in operator_rows
     ]
-    observed_operator_rows = operator_list_rows(summary_rows)
-    expected_operator_rows = (
-        reference_operator_rows(observed_operator_rows, eager_index)
-        if eager_index is not None
-        else observed_operator_rows
-    )
-    observed_by_relation = {
-        (str(row["operator_id"]), row["kernel_name"]): row
-        for row in observed_operator_rows
-    }
+    expected_operator_rows = operator_list_rows(summary_rows, eager_index)
     normalized_operator_rows = [
         {
             **row,
@@ -734,12 +749,12 @@ def validate_csv_outputs(
     for row in operator_rows:
         kernel_name = row["kernel_name"]
         operator_id = row["operator_id"]
-        # Eager labels change presentation, not the observed operator identity.
-        observed = observed_by_relation.get((operator_id, kernel_name), row)
-        operator_name = observed["operator_name"]
-        operator_kind = observed["operator_kind"]
-        expected_name, expected_kind, identity = operator_descriptor(
-            operator_name, kernel_name
+        operator_name = row["operator_name"]
+        operator_kind = row["operator_kind"]
+        expected_name, expected_kind, identity = inventory_descriptor(
+            "null" if operator_kind == "eager-refer" else operator_name,
+            kernel_name,
+            eager_index,
         )
         operator_classification_matches &= (
             expected_name == operator_name and expected_kind == operator_kind
@@ -761,7 +776,11 @@ def validate_csv_outputs(
     aten_rows_first = True
     for row in operator_rows:
         is_communication = row["operator_kind"] == "communication"
-        is_aten = row["operator_kind"] == "aten"
+        is_aten = row["operator_kind"] == "aten" or (
+            row["operator_kind"] == "eager-refer"
+            and row["operator_name"].startswith("aten::")
+            and "," not in row["operator_name"]
+        )
         if seen_non_aten and is_aten:
             aten_rows_first = False
         seen_non_aten |= not is_aten
@@ -908,7 +927,7 @@ def main() -> None:
     summary_rows = summary_csv_rows(
         kernel_report, round(summary["kernel_time_total_us"] * 1000)
     )
-    operator_rows = operator_list_rows(summary_rows)
+    operator_rows = operator_list_rows(summary_rows, eager_index)
     detail_rows = details_csv_rows(kernel_report)
     if eager_index is not None:
         operator_rows, detail_rows, reference_counts = attach_eager_reference(
