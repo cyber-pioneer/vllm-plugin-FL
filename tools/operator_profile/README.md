@@ -158,13 +158,16 @@ Inductor-generated `triton_poi_*`, `triton_red_*`, `triton_per_*`, and
 `triton_for_*` kernels are excluded from reference matching. Handwritten
 Triton kernels remain eligible. No capture data or graph-name fallback is added.
 
-`operator_list.csv` retains its original API, kind, operator IDs, and time
-shares. Rows needing metadata have `mapping_source=eager-refer` when eager
-candidates exist. `eager_operator_name` contains a unique reference API or
-`null`; `eager_api_candidates` preserves all candidate APIs, and
-`eager_shape_dtype_count` reports the number of distinct reference shape/dtype
-pairs. The API may identify a parent wrapper rather than the kernel's exact
-internal computation.
+`operator_list.csv` always contains five columns: `operator_id`, `operator_name`,
+`operator_kind`, `kernel_name`, and `kernel_time_percent(%)`. Only rows whose
+original kind is `unattributed` can receive an eager label. When candidates
+exist, `operator_kind` becomes `eager-refer` and `operator_name` contains the
+sorted, deduplicated API names joined by commas, without JSON brackets. For
+example, `aten::zero_,aten::zeros` means both APIs are candidates, not that both
+executed. CSV quoting keeps multiple names in one cell. Without candidates,
+the row remains `unattributed`. Other kinds, operator IDs, kernel grouping,
+row order, and time shares are unchanged. A reference API may identify a
+parent wrapper rather than the kernel's exact internal computation.
 
 `kernel_shape_dtype.csv` retains the original graph mapping status and inputs.
 Extra `eager_input_shapes` and `eager_input_dtypes` contain only unique reference

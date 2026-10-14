@@ -9,12 +9,6 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-OPERATOR_REFERENCE_FIELDS = [
-    "eager_operator_name",
-    "eager_api_candidates",
-    "eager_shape_dtype_count",
-    "mapping_source",
-]
 DETAIL_REFERENCE_FIELDS = [
     "eager_operator_name",
     "eager_input_shapes",
@@ -97,13 +91,38 @@ def unique_value(candidates: list[dict[str, Any]], field: str) -> Any:
     return next(iter(values.values())) if len(values) == 1 else None
 
 
+def reference_operator_rows(
+    operator_rows: list[dict[str, Any]],
+    index: dict[str, list[dict[str, Any]]],
+) -> list[dict[str, Any]]:
+    """Label only unattributed inventory rows; keep IDs and time shares intact."""
+    rows = []
+    for row in operator_rows:
+        candidates = (
+            select_candidates(index, row["kernel_name"], "null")
+            if row["operator_kind"] == "unattributed"
+            else []
+        )
+        apis = sorted({candidate["operator_name"] for candidate in candidates})
+        rows.append(
+            {
+                **row,
+                **(
+                    {"operator_name": ",".join(apis), "operator_kind": "eager-refer"}
+                    if apis
+                    else {}
+                ),
+            }
+        )
+    return rows
+
+
 def attach_eager_reference(
     operator_rows: list[dict[str, Any]],
     detail_rows: list[dict[str, Any]],
     index: dict[str, list[dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    """Keep graph observations and counters intact; references are extra columns."""
-    needs_reference = set()
+    """Label the inventory and keep original graph evidence in the details."""
     referenced_kernels = set()
     referenced_events = 0
     enriched_details = []
@@ -111,8 +130,6 @@ def attach_eager_reference(
         missing = row["operator_name"] == "null" or any(
             row[field] == "null" for field in ("input_shapes", "input_dtypes")
         )
-        if missing:
-            needs_reference.add(row["kernel_name"])
         candidates = (
             select_candidates(index, row["kernel_name"], row["operator_name"])
             if missing
@@ -142,31 +159,8 @@ def attach_eager_reference(
             }
         )
 
-    enriched_operators = []
-    for row in operator_rows:
-        candidates = (
-            select_candidates(index, row["kernel_name"], row["operator_name"])
-            if row["kernel_name"] in needs_reference
-            else []
-        )
-        apis = sorted({candidate["operator_name"] for candidate in candidates})
-        shape_dtype_pairs = {
-            encode([candidate["input_shapes"], candidate["input_dtypes"]])
-            for candidate in candidates
-            if candidate["input_shapes"] is not None
-            and candidate["input_dtypes"] is not None
-        }
-        enriched_operators.append(
-            {
-                **row,
-                "eager_operator_name": apis[0] if len(apis) == 1 else "null",
-                "eager_api_candidates": encode(apis or None),
-                "eager_shape_dtype_count": len(shape_dtype_pairs),
-                "mapping_source": "eager-refer" if candidates else "null",
-            }
-        )
     return (
-        enriched_operators,
+        reference_operator_rows(operator_rows, index),
         enriched_details,
         {
             "referenced_kernel_count": len(referenced_kernels),

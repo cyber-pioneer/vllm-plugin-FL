@@ -10,6 +10,7 @@ import pytest
 from tools.operator_profile.eager_reference import (
     attach_eager_reference,
     load_eager_reference,
+    reference_operator_rows,
 )
 from tools.operator_profile.extract_operator_shapes import (
     format_operator_time_percent,
@@ -553,17 +554,26 @@ def test_eager_reference_keeps_ambiguous_api_and_shape_candidates(tmp_path):
     original = eager_detail("shared_kernel", "null", None, None)
     original["mapping_status"] = "missing_external_id"
     operators, details, stats = attach_eager_reference(
-        [{"operator_name": "null", "kernel_name": "shared_kernel", "operator_id": 7}],
+        [
+            {
+                "operator_name": "null",
+                "operator_kind": "unattributed",
+                "kernel_name": "shared_kernel",
+                "operator_id": 7,
+            }
+        ],
         [original],
         index,
     )
     assert operators[0]["operator_id"] == 7
-    assert operators[0]["eager_operator_name"] == "null"
-    assert json.loads(operators[0]["eager_api_candidates"]) == [
-        "aten::zero_",
-        "aten::zeros",
-    ]
-    assert operators[0]["eager_shape_dtype_count"] == 2
+    assert operators[0]["operator_name"] == "aten::zero_,aten::zeros"
+    assert operators[0]["operator_kind"] == "eager-refer"
+    assert set(operators[0]) == {
+        "operator_id",
+        "operator_name",
+        "operator_kind",
+        "kernel_name",
+    }
     assert details[0]["eager_input_shapes"] == "null"
     assert details[0]["eager_input_dtypes"] == "null"
     candidates = json.loads(details[0]["eager_candidates"])
@@ -619,13 +629,61 @@ def test_eager_reference_rejects_other_rank(tmp_path):
         load_eager_reference(results, 0)
 
 
+def test_eager_inventory_labels_only_unattributed_rows():
+    rows = [
+        {
+            "operator_id": i,
+            "operator_name": "aten::add",
+            "operator_kind": kind,
+            "kernel_name": "shared_kernel",
+            "kernel_time_percent(%)": "1.23",
+        }
+        for i, kind in enumerate(
+            [
+                "aten",
+                "custom",
+                "communication",
+                "fused_communication_compute",
+                "triton_compiled",
+                "unattributed",
+            ],
+            start=1,
+        )
+    ]
+    rows[-1]["operator_name"] = "null"
+    rows.append({**rows[-1], "operator_id": 7, "kernel_name": "missing_kernel"})
+    index = {
+        "shared_kernel": [
+            {
+                "operator_name": "aten::add",
+                "input_shapes": [[4]],
+                "input_dtypes": ["float"],
+            },
+            {
+                "operator_name": "aten::add",
+                "input_shapes": [[8]],
+                "input_dtypes": ["float"],
+            },
+        ]
+    }
+    actual = reference_operator_rows(rows, index)
+    assert actual[:5] == rows[:5]
+    assert actual[-1] == rows[-1]
+    assert actual[5] == {
+        **rows[5],
+        "operator_name": "aten::add",
+        "operator_kind": "eager-refer",
+    }
+    assert rows[5]["operator_kind"] == "unattributed"
+
+
 def test_extractor_eager_reference_preserves_graph_outputs(tmp_path):
     eager = tmp_path / "eager"
     write_eager_results(
         eager,
         [
             eager_detail("copy_kernel", "aten::copy_", [[4]], ["float"]),
-            eager_detail("copy_kernel", "aten::copy_", [[8]], ["float"]),
+            eager_detail("copy_kernel", "aten::add", [[8]], ["float"]),
         ],
     )
     trace = tmp_path / "rank0.pt.trace.json"
@@ -683,14 +741,23 @@ def test_extractor_eager_reference_preserves_graph_outputs(tmp_path):
         with (enriched / name).open() as source:
             actual = list(csv.DictReader(source))
         assert len(original) == len(actual)
-        assert all(
-            {key: new[key] for key in old} == old for old, new in zip(original, actual)
-        )
-        assert all(
-            row["mapping_source"] == "null"
-            for row in actual
-            if row["kernel_name"] != "copy_kernel"
-        )
+        for old, new in zip(original, actual):
+            if name == "operator_list.csv":
+                assert set(new) == set(old)
+                for key in ["operator_id", "kernel_name", "kernel_time_percent(%)"]:
+                    assert new[key] == old[key]
+                if (
+                    old["operator_kind"] == "unattributed"
+                    and old["kernel_name"] == "copy_kernel"
+                ):
+                    assert new["operator_kind"] == "eager-refer"
+                    assert new["operator_name"] == "aten::add,aten::copy_"
+                else:
+                    assert new == old
+            else:
+                assert {key: new[key] for key in old} == old
+                if new["kernel_name"] != "copy_kernel":
+                    assert new["mapping_source"] == "null"
     summary = json.loads((enriched / "summary.json").read_text())
     assert summary["kernel_event_count"] == 4
     assert summary["kernel_time_total_us"] == 10

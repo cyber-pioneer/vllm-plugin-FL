@@ -17,9 +17,9 @@ from typing import Any
 if __package__:
     from .eager_reference import (
         DETAIL_REFERENCE_FIELDS,
-        OPERATOR_REFERENCE_FIELDS,
         attach_eager_reference,
         load_eager_reference,
+        reference_operator_rows,
     )
     from .rule.rule_map import (
         OperatorIdentity,
@@ -30,9 +30,9 @@ if __package__:
 else:
     from eager_reference import (
         DETAIL_REFERENCE_FIELDS,
-        OPERATOR_REFERENCE_FIELDS,
         attach_eager_reference,
         load_eager_reference,
+        reference_operator_rows,
     )
     from rule.rule_map import (
         OperatorIdentity,
@@ -666,6 +666,7 @@ def validate_csv_outputs(
     kernel_shape_dtype_path: Path,
     operator_list_path: Path,
     kernel_summary: dict[str, Any],
+    eager_index: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, bool]:
     with kernel_time_path.open(encoding="utf-8", newline="") as source:
         summary_rows = list(csv.DictReader(source))
@@ -705,10 +706,19 @@ def validate_csv_outputs(
         (row["operator_name"], row["operator_kind"], row["kernel_name"])
         for row in operator_rows
     ]
-    expected_operator_rows = operator_list_rows(summary_rows)
+    observed_operator_rows = operator_list_rows(summary_rows)
+    expected_operator_rows = (
+        reference_operator_rows(observed_operator_rows, eager_index)
+        if eager_index is not None
+        else observed_operator_rows
+    )
+    observed_by_relation = {
+        (str(row["operator_id"]), row["kernel_name"]): row
+        for row in observed_operator_rows
+    }
     normalized_operator_rows = [
         {
-            **{key: row[key] for key in expected_operator_rows[0]},
+            **row,
             "operator_id": (
                 row["operator_id"]
                 if row["operator_id"] == "null"
@@ -722,10 +732,12 @@ def validate_csv_outputs(
     operator_ids_stable = True
     operator_classification_matches = True
     for row in operator_rows:
-        operator_name = row["operator_name"]
-        operator_kind = row["operator_kind"]
         kernel_name = row["kernel_name"]
         operator_id = row["operator_id"]
+        # Eager labels change presentation, not the observed operator identity.
+        observed = observed_by_relation.get((operator_id, kernel_name), row)
+        operator_name = observed["operator_name"]
+        operator_kind = observed["operator_kind"]
         expected_name, expected_kind, identity = operator_descriptor(
             operator_name, kernel_name
         )
@@ -938,8 +950,7 @@ def main() -> None:
             "operator_kind",
             "kernel_name",
             "kernel_time_percent(%)",
-        ]
-        + (OPERATOR_REFERENCE_FIELDS if eager_index is not None else []),
+        ],
         operator_rows,
     )
     summary["conservation"].update(
@@ -948,6 +959,7 @@ def main() -> None:
             kernel_shape_dtype_path,
             operator_list_path,
             kernel_summary,
+            eager_index,
         )
     )
     failed_checks = [
