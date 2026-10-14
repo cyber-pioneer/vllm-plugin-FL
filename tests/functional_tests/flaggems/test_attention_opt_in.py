@@ -73,4 +73,9 @@ print("MetaX fused opt-in encoder and paged decoder: PASS")
         text=True,
         timeout=180,
     )
+    if result.returncode != 0:
+        # The functional session exit hook bypasses pytest's failure summary.
+        # Emit the child traceback now so CI preserves the opt-in failure.
+        print(result.stdout, end="", flush=True)
+        print(result.stderr, end="", file=sys.stderr, flush=True)
     assert result.returncode == 0, result.stdout + result.stderr
