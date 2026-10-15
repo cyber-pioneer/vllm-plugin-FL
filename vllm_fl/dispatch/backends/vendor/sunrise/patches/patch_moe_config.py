@@ -35,6 +35,20 @@ _GEMM_STAGE = "gemm1"
 
 def _sunrise_moe_config(w1_shape, w2_shape, top_k, dtype, M, block_shape=None):
     """FlagGems-sourced replacement for vLLM's ``try_get_optimal_moe_config``."""
+    import vllm_fl.envs as fl_envs
+
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm.ops.fused_moe import try_get_optimal_moe_config
+        from vllm.model_executor.layers.fused_moe import get_config
+
+        override = get_config()
+        if override:
+            return override
+        return try_get_optimal_moe_config(
+            w1_shape, w2_shape, top_k, dtype, M, w1_shape[0],
+            block_shape=block_shape, gemm_stage=_GEMM_STAGE,
+        )
+
     from flag_gems.fused import fused_moe as gems_moe
     from flag_gems.runtime.backend._sunrise.fused.fused_moe import (
         _sunrise_moe_config_patch,

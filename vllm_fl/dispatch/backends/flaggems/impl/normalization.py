@@ -27,7 +27,12 @@ def rms_norm_flaggems(
     Returns:
         Normalized tensor, or tuple of (normalized, residual) if residual is provided
     """
-    from flag_gems.modules.normalization import gems_rms_forward
+    import vllm_fl.envs as fl_envs
+
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from vllm_fl.ops.flaggems_vllm_adapters import rms_norm as gems_rms_forward
+    else:
+        from flag_gems.modules.normalization import gems_rms_forward
 
     # Get weight and epsilon from obj
     weight = obj.weight

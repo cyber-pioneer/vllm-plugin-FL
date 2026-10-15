@@ -37,10 +37,18 @@ def _force_safe_flash_attn_launch_config() -> bool:
     specialization. ``num_stages`` is part of Triton's cache key.
     """
     try:
-        from flag_gems import runtime as _gems_runtime
-        from flag_gems.runtime.backend._sunrise.heuristics_config_utils import (
-            HEURISTICS_CONFIGS,
-        )
+        import vllm_fl.envs as fl_envs
+
+        if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+            from flaggems_vllm import runtime as _gems_runtime
+            from flaggems_vllm.runtime.backend._sunrise.heuristics_config_utils import (
+                HEURISTICS_CONFIGS,
+            )
+        else:
+            from flag_gems import runtime as _gems_runtime
+            from flag_gems.runtime.backend._sunrise.heuristics_config_utils import (
+                HEURISTICS_CONFIGS,
+            )
     except Exception as exc:  # pragma: no cover
         _log.debug("Skipping safe flash-tile clamp: %s", exc)
         return False

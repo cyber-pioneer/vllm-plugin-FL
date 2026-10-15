@@ -6,6 +6,7 @@ import torch
 
 CUDA_RELEASE_TESTS = {
     "test_vllm_package.py",
+    "test_vllm_migrated_ops.py",
     "test_vllm_switch.py",
 }
 

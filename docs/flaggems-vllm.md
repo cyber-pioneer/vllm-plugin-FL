@@ -1,9 +1,10 @@
 # FlagGems-vllm fused operators
 
-When enabled, selected FlagGems implementations dispatch fused activation,
-rotary, attention,
-and MoE operators through FlagGems-vllm. General ATen
-registration and RMS normalization continue to use FlagGems. Existing attention
+When enabled, direct FlagGems operator calls dispatch through FlagGems-vllm,
+including activation, rotary, attention, MoE, normalization, scaled matrix
+multiplication, and GDN. General ATen registration continues to use
+`flag_gems.enable()`. Runtime utilities such as device detection and ATen
+registration helpers also remain with FlagGems. Existing attention
 backend selection is preserved: the default service paths use upstream Triton
 or DeepSeek sparse attention unless FlagGems attention is explicitly selected.
 
@@ -69,10 +70,27 @@ DeepSeek-V4-Flash FP8 checkpoints require `--kv-cache-dtype fp8` with this
 vLLM version. The validation used tensor parallel size 4. Add `--enforce-eager`
 for eager mode and omit it for the default graph mode.
 
-GDN migration is deferred: model GDN paths and the existing plugin adapters
-remain unchanged. The pinned release has kernel-dependent state layouts;
-converging that public contract belongs in the operator library before a future
-plugin migration.
+The plugin's GDN adapters select the pinned release's chunk and recurrent
+operators. They translate vLLM 0.24 V-major states to the selected release
+kernel's layout and preserve in-place state updates. Explicit sequence-to-state
+indices avoid token-offset addressing; padding slots use private scratch state
+and produce zero output without reading or updating the caller's pool.
+Ascend's older K-major
+FLA contract is adapted separately. Existing upstream model paths that do not
+call a FlagGems operator retain their original backend selection.
+
+The release exposes add-RMSNorm rather than standalone RMSNorm. The standalone
+adapter supplies a zero residual; the fused residual adapter preserves the
+caller-owned input and residual buffers, including noncontiguous views.
+W8A8 linear uses the release's `triton_scaled_mm` interface. Sunrise attention,
+MLA, scaled-mm, and MoE configuration imports also follow the fused switch;
+Ascend FLA normalization and expert calls use the release adapters.
+
+FlagGems-vllm v0.2.0 does not export ARM `pack_rhs_qsi4c128p` or
+`w4a8_g128_linear`. Selecting those ARM paths with the fused switch enabled
+raises an explicit unsupported-operator error. They require an upstream release
+implementation; the plugin does not silently call the old FlagGems kernels.
+With the switch disabled, the existing ARM implementations remain available.
 
 Standard clamped SwiGLU uses the same dispatcher and selection policy as SiLU
 and GELU. Its public `custom_ops` name remains `silu_and_mul_with_clamp`; the

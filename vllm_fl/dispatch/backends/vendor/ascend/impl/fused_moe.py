@@ -9,7 +9,7 @@ from typing import Optional
 import torch
 import torch.nn.functional as F
 import torch_npu
-from flag_gems.runtime.backend._ascend import fused
+import vllm_fl.envs as fl_envs
 
 
 def _torch_fused_experts_impl(
@@ -124,6 +124,23 @@ def fused_experts_impl(
     w1_bias: Optional[torch.Tensor] = None,
     w2_bias: Optional[torch.Tensor] = None,
 ) -> torch.Tensor:
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import fused_experts_impl as release_experts
+
+        return release_experts(
+            hidden_states=hidden_states, w1=w1, w2=w2,
+            topk_weights=topk_weights, topk_ids=topk_ids,
+            inplace=inplace, activation=activation,
+            apply_router_weight_on_input=apply_router_weight_on_input,
+            use_fp8_w8a8=use_fp8_w8a8, use_int8_w8a8=use_int8_w8a8,
+            use_int8_w8a16=use_int8_w8a16, use_int4_w4a16=use_int4_w4a16,
+            per_channel_quant=per_channel_quant,
+            global_num_experts=global_num_experts, expert_map=expert_map,
+            w1_scale=w1_scale, w2_scale=w2_scale, w1_zp=w1_zp, w2_zp=w2_zp,
+            a1_scale=a1_scale, a2_scale=a2_scale, block_shape=block_shape,
+            w1_bias=w1_bias, w2_bias=w2_bias,
+        )
+
     # Check constraints.
     if use_int4_w4a16:
         assert hidden_states.size(1) // 2 == w1.size(2), "Hidden size mismatch"

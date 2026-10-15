@@ -4,10 +4,14 @@ import torch
 
 from vllm.model_executor.custom_op import CustomOp
 
+import vllm_fl.envs as fl_envs
 from vllm_fl.utils import use_flaggems_op
 
 if use_flaggems_op("fused_recurrent_gated_delta_rule_fwd"):
-    from flag_gems.fused.FLA import fused_recurrent_gated_delta_rule_fwd
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from vllm_fl.ops.flaggems_vllm_adapters import fused_recurrent_gated_delta_rule_fwd
+    else:
+        from flag_gems.fused.FLA import fused_recurrent_gated_delta_rule_fwd
 else:
     from vllm.model_executor.layers.fla.ops.fused_recurrent import (
         fused_recurrent_gated_delta_rule_fwd,
@@ -59,7 +63,7 @@ class FusedRecurrentGatedDeltaRuleOp(CustomOp):
         r"""
         Args:
         inplace_final_state (Optional[bool]):
-                Whether to inplace the final state of shape `[N, H, K, V]`. Default: `False`.
+                Whether to inplace the final state of shape `[N, H, V, K]`. Default: `False`.
         """
         super().__init__()
         self.inplace_final_state = inplace_final_state
@@ -95,7 +99,7 @@ class FusedRecurrentGatedDeltaRuleOp(CustomOp):
                 Scale factor for the RetNet attention scores.
                 If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
             initial_state (Optional[torch.Tensor]):
-                Initial state of shape `[N, HV, K, V]` for `N` input sequences.
+                Initial state of shape `[N, HV, V, K]` for `N` input sequences.
                 For equal-length input sequences, `N` equals the batch size `B`.
                 Default: `None`.
             inplace_final_state: bool:
@@ -113,7 +117,7 @@ class FusedRecurrentGatedDeltaRuleOp(CustomOp):
             o (torch.Tensor):
                 Outputs of shape `[B, T, HV, V]`.
             final_state (torch.Tensor):
-                Final state of shape `[N, HV, K, V]`.
+                Final state of shape `[N, HV, V, K]`.
         """
         if cu_seqlens is not None and q.shape[0] != 1:
             raise ValueError(

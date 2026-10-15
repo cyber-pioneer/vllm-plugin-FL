@@ -150,7 +150,12 @@ def _resolve_fg_scaled_mm():
     global _FG_MM_FN
     if _FG_MM_FN is not None:
         return _FG_MM_FN
-    from flag_gems.ops.scaled_mm import scaled_mm as _fg
+    import vllm_fl.envs as fl_envs
+
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from vllm_fl.ops.flaggems_vllm_adapters import scaled_mm as _fg
+    else:
+        from flag_gems.ops.scaled_mm import scaled_mm as _fg
     _FG_MM_FN = _fg
     return _fg
 
@@ -202,10 +207,10 @@ def _patch_triton_scaled_mm() -> bool:
         if not _MM_SHAPE_LOGGED:
             _MM_SHAPE_LOGGED = True
             logger.info(
-                "native-int8: triton_scaled_mm->FlagGems scaled_mm active. "
+                "native-int8: selected scaled-mm implementation active (%s). "
                 "input=%s (2d=%s) weight=%s (transposed=%s) scale_a=%s "
                 "scale_b=%s out_dtype=%s bias=%s",
-                tuple(input_shape), tuple(input.shape),
+                fg.__module__, tuple(input_shape), tuple(input.shape),
                 tuple(weight.shape), transposed,
                 tuple(scale_a.shape), tuple(scale_b.shape) if scale_b is not None
                 else None, out_dtype, None if bias is None else tuple(bias.shape),
