@@ -10,11 +10,15 @@ import pytest
 from tools.operator_profile.eager_reference import (
     attach_eager_reference,
     load_eager_reference,
+    reference_operator_name,
     reference_operator_rows,
 )
 from tools.operator_profile.extract_operator_shapes import (
+    collect_runtime,
     format_operator_time_percent,
     operator_list_rows,
+    summary_csv_rows,
+    validate_csv_outputs,
 )
 from tools.operator_profile.rule.rule_coverage import (
     FlagOSEvidence,
@@ -629,6 +633,155 @@ def test_eager_reference_rejects_other_rank(tmp_path):
         load_eager_reference(results, 0)
 
 
+def test_eager_reference_does_not_chain_a_filled_ambiguous_api(tmp_path):
+    results = tmp_path / "eager"
+    row = eager_detail("kernel", "aten::mul", [[4]], ["float"])
+    row["mapping_status"] = "operator_ambiguous"
+    row["mapping_source"] = "eager-refer"
+    write_eager_results(results, [row])
+    index, _ = load_eager_reference(results, 0)
+    assert index == {}
+
+
+@pytest.mark.parametrize(
+    ("operator", "kernel", "apis", "expected"),
+    [
+        ("null", "kernel", ["aten::mul", "aten::mul"], "aten::mul"),
+        ("aten::add", "kernel", ["aten::mul"], "aten::add"),
+        ("null", "kernel", ["aten::mul", "aten::add"], "null"),
+        ("null", "kernel", [], "null"),
+        ("null", "triton_poi_fused_mul_0", ["aten::mul"], "null"),
+    ],
+)
+def test_reference_api_fill_requires_a_missing_name_and_unique_candidate(
+    operator, kernel, apis, expected
+):
+    index = {kernel: [{"operator_name": api} for api in apis]}
+    assert reference_operator_name(operator, kernel, index) == expected
+    assert reference_operator_name(operator, kernel, None) == operator
+
+
+def test_reference_fill_does_not_override_conflicting_runtime_candidates():
+    index = {
+        "kernel": [
+            {
+                "operator_name": "aten::mul",
+                "input_shapes": [[4]],
+                "input_dtypes": ["float"],
+            }
+        ]
+    }
+    observed = [{"operator": "aten::add"}, {"operator": "aten::sub"}]
+    assert reference_operator_name("null", "kernel", index, observed) == "null"
+    detail = eager_detail("kernel", "null", None, None)
+    detail["mapping_status"] = "operator_ambiguous"
+    detail["candidate_operators"] = json.dumps(observed)
+    _, details, _ = attach_eager_reference([], [detail], index)
+    assert details[0]["operator_name"] == "null"
+    assert details[0]["mapping_source"] == "eager-refer"
+    assert details[0]["candidate_operators"] == detail["candidate_operators"]
+    report = {
+        "kernel": {
+            "operator_variants": {},
+            "unattributed_variants": [
+                {
+                    "kernel_event_count": 1,
+                    "kernel_time_us": 1,
+                    "candidate_operators": observed,
+                }
+            ],
+        }
+    }
+    row = summary_csv_rows(report, 1000, index)[0]
+    assert row["operator_name"] == row["refer"] == "null"
+
+
+def test_detail_fills_unique_api_without_selecting_an_ambiguous_shape():
+    index = {
+        "kernel": [
+            {
+                "operator_name": "aten::mul",
+                "input_shapes": [[4]],
+                "input_dtypes": ["float"],
+            },
+            {
+                "operator_name": "aten::mul",
+                "input_shapes": [[8]],
+                "input_dtypes": ["float"],
+            },
+        ]
+    }
+    original = eager_detail("kernel", "null", None, None)
+    original["mapping_status"] = "missing_external_id"
+    _, details, _ = attach_eager_reference([], [original], index)
+    assert details[0]["operator_name"] == "aten::mul"
+    assert details[0]["eager_operator_name"] == "aten::mul"
+    assert details[0]["eager_input_shapes"] == "null"
+    assert len(json.loads(details[0]["eager_candidates"])) == 2
+    assert {
+        key: value
+        for key, value in details[0].items()
+        if key in original and key != "operator_name"
+    } == {key: value for key, value in original.items() if key != "operator_name"}
+
+
+def test_kernel_time_merges_references_before_percent_rounding():
+    report = {
+        "mul_kernel": {
+            "operator_variants": {
+                "aten::mul": [{"kernel_event_count": 1, "kernel_time_us": 0.004}]
+            },
+            "unattributed_variants": [
+                {"kernel_event_count": 2, "kernel_time_us": 0.004}
+            ],
+        },
+        "other_kernel": {
+            "operator_variants": {
+                "aten::add": [{"kernel_event_count": 1, "kernel_time_us": 99.992}]
+            },
+            "unattributed_variants": [],
+        },
+    }
+    original = summary_csv_rows(report, 100_000)
+    index = {"mul_kernel": [{"operator_name": "aten::mul"}]}
+    actual = summary_csv_rows(report, 100_000, index)
+    mul = [row for row in actual if row["kernel_name"] == "mul_kernel"]
+    assert mul == [
+        {
+            "operator_name": "aten::mul",
+            "refer": "eager-refer",
+            "kernel_name": "mul_kernel",
+            "kernel_call_count": 3,
+            "kernel_time_us": 0.008,
+            "percent": "0.008%",
+        }
+    ]
+    assert all(row["refer"] == "null" for row in original)
+    assert (
+        next(row for row in actual if row["kernel_name"] == "other_kernel")["refer"]
+        == "null"
+    )
+    assert sum(row["kernel_call_count"] for row in actual) == sum(
+        row["kernel_call_count"] for row in original
+    )
+
+
+def test_kernel_time_keeps_distinct_apis_for_the_same_kernel():
+    report = {
+        "kernel": {
+            "operator_variants": {
+                "aten::add": [{"kernel_event_count": 1, "kernel_time_us": 1}]
+            },
+            "unattributed_variants": [{"kernel_event_count": 2, "kernel_time_us": 2}],
+        }
+    }
+    rows = summary_csv_rows(report, 3_000, {"kernel": [{"operator_name": "aten::mul"}]})
+    assert [(r["operator_name"], r["refer"], r["kernel_call_count"]) for r in rows] == [
+        ("aten::add", "null", 1),
+        ("aten::mul", "eager-refer", 2),
+    ]
+
+
 def test_eager_inventory_labels_only_unattributed_rows():
     rows = [
         {
@@ -786,16 +939,51 @@ def test_extractor_merges_unique_eager_aten_and_preserves_runtime_details(tmp_pa
     with (output / "kernel_shape_dtype.csv").open() as source:
         details = list(csv.DictReader(source))
     assert len(details) == 2
-    assert any(
-        row["operator_name"] == "null" and row["mapping_source"] == "eager-refer"
-        for row in details
+    reference_row = next(
+        row for row in details if row["mapping_status"] == "missing_external_id"
     )
+    assert reference_row["operator_name"] == "aten::mul"
+    assert reference_row["mapping_source"] == "eager-refer"
+    assert reference_row["input_shapes"] == reference_row["input_dtypes"] == "null"
+    assert reference_row["eager_operator_name"] == "aten::mul"
+    assert json.loads(reference_row["eager_input_shapes"]) == [[4]]
+    assert len(reference_row) == 14
+    with (output / "kernel_time.csv").open() as source:
+        time_rows = list(csv.DictReader(source))
+    assert time_rows == [
+        {
+            "operator_name": "aten::mul",
+            "refer": "eager-refer",
+            "kernel_name": "mul_kernel",
+            "kernel_call_count": "2",
+            "kernel_time_us": "3.0",
+            "percent": "100.000%",
+        }
+    ]
     summary = json.loads((output / "summary.json").read_text())
     assert summary["kernel_event_count"] == 2
     assert summary["kernel_time_total_us"] == 3
     assert all(
         value for value in summary["conservation"].values() if isinstance(value, bool)
     )
+    kernel_summary, kernel_report, _ = collect_runtime([trace], 0)
+    index, _ = load_eager_reference(eager, 0)
+    time_rows[0]["refer"] = "null"
+    with (output / "kernel_time.csv").open("w", newline="") as target:
+        writer = csv.DictWriter(target, fieldnames=list(time_rows[0]))
+        writer.writeheader()
+        writer.writerows(time_rows)
+    checks = validate_csv_outputs(
+        output / "kernel_time.csv",
+        output / "kernel_shape_dtype.csv",
+        output / "operator_list.csv",
+        kernel_summary,
+        kernel_report,
+        index,
+    )
+    assert checks["csv_kernel_event_count_matches"]
+    assert checks["csv_kernel_time_matches"]
+    assert not checks["csv_summary_rows_match_expected"]
 
 
 def test_extractor_eager_reference_preserves_graph_outputs(tmp_path):

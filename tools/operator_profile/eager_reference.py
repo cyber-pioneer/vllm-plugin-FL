@@ -51,7 +51,12 @@ def load_eager_reference(
             operator = row["operator_name"]
             if kernel.startswith(INDUCTOR_PREFIXES) or operator in {"", "null"}:
                 continue
-            if not row["mapping_status"].startswith("operator_"):
+            if row["mapping_status"] not in {
+                "operator_shape_matched",
+                "operator_matched_dtype_missing",
+                "operator_matched_shape_missing",
+                "operator_matched_metadata_missing",
+            }:
                 continue
             candidate = {
                 "operator_name": operator,
@@ -91,6 +96,24 @@ def unique_value(candidates: list[dict[str, Any]], field: str) -> Any:
     return next(iter(values.values())) if len(values) == 1 else None
 
 
+def reference_operator_name(
+    operator: str,
+    kernel: str,
+    index: dict[str, list[dict[str, Any]]] | None,
+    observed_candidates: list[dict[str, Any]] | None = None,
+) -> str:
+    """Fill only a missing API with one distinct exact-kernel reference API."""
+    if operator != "null" or index is None:
+        return operator
+    reference = unique_value(
+        select_candidates(index, kernel, operator), "operator_name"
+    )
+    observed_apis = {row["operator"] for row in observed_candidates or []}
+    if observed_apis and reference not in observed_apis:
+        return operator
+    return reference or operator
+
+
 def reference_operator_rows(
     operator_rows: list[dict[str, Any]],
     index: dict[str, list[dict[str, Any]]],
@@ -122,7 +145,7 @@ def attach_eager_reference(
     detail_rows: list[dict[str, Any]],
     index: dict[str, list[dict[str, Any]]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    """Label the inventory and keep original graph evidence in the details."""
+    """Fill missing API names, keeping raw input metadata and mapping status."""
     referenced_kernels = set()
     referenced_events = 0
     enriched_details = []
@@ -138,12 +161,19 @@ def attach_eager_reference(
         if candidates:
             referenced_kernels.add(row["kernel_name"])
             referenced_events += int(row["kernel_event_count"])
+        eager_operator = unique_value(candidates, "operator_name") or "null"
         enriched_details.append(
             {
                 **row,
-                "eager_operator_name": (
-                    unique_value(candidates, "operator_name") or "null"
+                "operator_name": (
+                    reference_operator_name(
+                        row["operator_name"],
+                        row["kernel_name"],
+                        index,
+                        json.loads(row.get("candidate_operators", "null")),
+                    )
                 ),
+                "eager_operator_name": eager_operator,
                 "eager_input_shapes": encode(
                     unique_value(candidates, "input_shapes")
                     if row["input_shapes"] == "null"

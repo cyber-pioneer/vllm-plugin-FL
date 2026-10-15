@@ -19,6 +19,7 @@ if __package__:
         DETAIL_REFERENCE_FIELDS,
         attach_eager_reference,
         load_eager_reference,
+        reference_operator_name,
         reference_operator_rows,
     )
     from .rule.rule_map import (
@@ -32,6 +33,7 @@ else:
         DETAIL_REFERENCE_FIELDS,
         attach_eager_reference,
         load_eager_reference,
+        reference_operator_name,
         reference_operator_rows,
     )
     from rule.rule_map import (
@@ -498,10 +500,13 @@ def write_csv(path: Path, fieldnames: list[str], rows: list[dict[str, Any]]) -> 
 
 
 def summary_csv_rows(
-    kernel_report: dict[str, Any], kernel_total_ns: int
+    kernel_report: dict[str, Any],
+    kernel_total_ns: int,
+    eager_index: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     relation_count: Counter[tuple[str | None, str]] = Counter()
     relation_ns: Counter[tuple[str | None, str]] = Counter()
+    referenced_relations: set[tuple[str | None, str]] = set()
     for kernel_name, report in kernel_report.items():
         for operator, variants in report["operator_variants"].items():
             for row in variants:
@@ -509,7 +514,12 @@ def summary_csv_rows(
                 relation_count[key] += row["kernel_event_count"]
                 relation_ns[key] += round(row["kernel_time_us"] * 1000)
         for row in report["unattributed_variants"]:
-            key = (None, kernel_name)
+            reference = reference_operator_name(
+                "null", kernel_name, eager_index, row.get("candidate_operators")
+            )
+            key = (None if reference == "null" else reference, kernel_name)
+            if reference != "null":
+                referenced_relations.add(key)
             relation_count[key] += row["kernel_event_count"]
             relation_ns[key] += round(row["kernel_time_us"] * 1000)
 
@@ -525,6 +535,11 @@ def summary_csv_rows(
     return [
         {
             "operator_name": operator if operator is not None else "null",
+            "refer": (
+                "eager-refer"
+                if (operator, kernel_name) in referenced_relations
+                else "null"
+            ),
             "kernel_name": kernel_name,
             "kernel_call_count": relation_count[(operator, kernel_name)],
             "kernel_time_us": ns_to_us(relation_ns[(operator, kernel_name)]),
@@ -690,6 +705,7 @@ def validate_csv_outputs(
     kernel_shape_dtype_path: Path,
     operator_list_path: Path,
     kernel_summary: dict[str, Any],
+    kernel_report: dict[str, Any],
     eager_index: dict[str, list[dict[str, Any]]] | None = None,
 ) -> dict[str, bool]:
     with kernel_time_path.open(encoding="utf-8", newline="") as source:
@@ -730,7 +746,15 @@ def validate_csv_outputs(
         (row["operator_name"], row["operator_kind"], row["kernel_name"])
         for row in operator_rows
     ]
-    expected_operator_rows = operator_list_rows(summary_rows, eager_index)
+    total_ns = sum(expected_ns.values())
+    raw_summary_rows = summary_csv_rows(kernel_report, total_ns)
+    expected_summary_rows = summary_csv_rows(kernel_report, total_ns, eager_index)
+    expected_details_rows = details_csv_rows(kernel_report)
+    if eager_index is not None:
+        _, expected_details_rows, _ = attach_eager_reference(
+            [], expected_details_rows, eager_index
+        )
+    expected_operator_rows = operator_list_rows(raw_summary_rows, eager_index)
     normalized_operator_rows = [
         {
             **row,
@@ -849,6 +873,16 @@ def validate_csv_outputs(
         "csv_summary_relations_unique": (
             len(summary_relations) == len(set(summary_relations))
         ),
+        "csv_summary_rows_match_expected": summary_rows
+        == [
+            {key: str(value) for key, value in row.items()}
+            for row in expected_summary_rows
+        ],
+        "csv_details_rows_match_expected": details_rows
+        == [
+            {key: str(value) for key, value in row.items()}
+            for row in expected_details_rows
+        ],
         "csv_summary_detail_relations_match": (
             set(summary_relations) == details_relations
         ),
@@ -938,12 +972,15 @@ def main() -> None:
         kernel_time_path,
         [
             "operator_name",
+            "refer",
             "kernel_name",
             "kernel_call_count",
             "kernel_time_us",
             "percent",
         ],
-        summary_rows,
+        summary_csv_rows(
+            kernel_report, round(summary["kernel_time_total_us"] * 1000), eager_index
+        ),
     )
     write_csv(
         kernel_shape_dtype_path,
@@ -978,6 +1015,7 @@ def main() -> None:
             kernel_shape_dtype_path,
             operator_list_path,
             kernel_summary,
+            kernel_report,
             eager_index,
         )
     )
