@@ -25,9 +25,11 @@ The release is https://github.com/flagos-ai/FlagGems-vllm/releases/tag/v0.2.0.
 Every hardware platform's CI setup calls the shared installer with its selected
 Python interpreter. It verifies the source commit in `direct_url.json` and keeps
 the existing Torch, Triton, FlagGems, vLLM, and NumPy versions. NVIDIA CI alone
-requires FlagGems 5.4.0. All nine platforms (CUDA, Ascend, Hygon, MetaX, MUSA,
-Enflame, Iluvatar, Kunlunxin, and T-Head) are enabled in the CI registry, and
-all platform test containers set `VLLM_FL_USE_FLAGGEMS_VLLM=1`. This exercises
+requires FlagGems 5.4.0. Eight platforms (CUDA, Hygon, MetaX, MUSA, Enflame,
+Iluvatar, Kunlunxin, and T-Head) are enabled in the CI registry, and their test
+containers set `VLLM_FL_USE_FLAGGEMS_VLLM=1`. Ascend remains disabled with its
+original CI configuration because adaptation to the current version is pending.
+This exercises
 the fused integration through each platform's existing unit, functional,
 inference, serving, and benchmark gates where configured. CUDA model gates
 also run the same inference/serving cases with `0` as a baseline, using the
@@ -75,8 +77,8 @@ operators. They translate vLLM 0.24 V-major states to the selected release
 kernel's layout and preserve in-place state updates. Explicit sequence-to-state
 indices avoid token-offset addressing; padding slots use private scratch state
 and produce zero output without reading or updating the caller's pool.
-Ascend's older K-major
-FLA contract is adapted separately. Existing upstream model paths that do not
+The Ascend adapter targets its older K-major FLA contract, but adaptation to
+the current version is still pending and Ascend CI remains disabled. Existing upstream model paths that do not
 call a FlagGems operator retain their original backend selection.
 
 The release exposes add-RMSNorm rather than standalone RMSNorm. The standalone
@@ -84,7 +86,8 @@ adapter supplies a zero residual; the fused residual adapter preserves the
 caller-owned input and residual buffers, including noncontiguous views.
 W8A8 linear uses the release's `triton_scaled_mm` interface. Sunrise attention,
 MLA, scaled-mm, and MoE configuration imports also follow the fused switch;
-Ascend FLA normalization and expert calls use the release adapters.
+Ascend FLA normalization and expert adapters remain unvalidated in this version;
+they are not part of the enabled CI platforms.
 
 FlagGems-vllm v0.2.0 does not export ARM `pack_rhs_qsi4c128p` or
 `w4a8_g128_linear`. Selecting those ARM paths with the fused switch enabled
