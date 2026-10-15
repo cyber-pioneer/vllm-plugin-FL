@@ -7,14 +7,10 @@ import torch
 from vllm.model_executor.custom_op import CustomOp
 from vllm.model_executor.layers.fla.ops.l2norm import l2norm_fwd
 from .utils import input_guard
-import vllm_fl.envs as fl_envs
 from vllm_fl.utils import use_flaggems_op
 
 if use_flaggems_op("chunk_gated_delta_rule_fwd"):
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from vllm_fl.ops.flaggems_vllm_adapters import chunk_gated_delta_rule_fwd
-    else:
-        from flag_gems.fused.FLA import chunk_gated_delta_rule_fwd
+    from flag_gems.fused.FLA import chunk_gated_delta_rule_fwd
 else:
     from vllm.model_executor.layers.fla.ops.chunk import chunk_gated_delta_rule_fwd
 
@@ -65,7 +61,7 @@ class ChunkGatedDeltaRuleOp(CustomOp):
         r"""
         Args:
         output_final_state (Optional[bool]):
-                Whether to output the final state of shape `[N, H, V, K]`. Default: `False`.
+                Whether to output the final state of shape `[N, H, K, V]`. Default: `False`.
         """
         super().__init__()
         self.output_final_state = output_final_state
@@ -99,7 +95,7 @@ class ChunkGatedDeltaRuleOp(CustomOp):
                 Scale factor for the RetNet attention scores.
                 If not provided, it will default to `1 / sqrt(K)`. Default: `None`.
             initial_state (Optional[torch.Tensor]):
-                Initial state of shape `[N, H, V, K]` for `N` input sequences.
+                Initial state of shape `[N, H, K, V]` for `N` input sequences.
                 For equal-length input sequences, `N` equals the batch size `B`.
                 Default: `None`.
             cu_seqlens (torch.LongTensor):
@@ -110,7 +106,7 @@ class ChunkGatedDeltaRuleOp(CustomOp):
             o (torch.Tensor):
                 Outputs of shape `[B, T, H, V]`.
             final_state (torch.Tensor):
-                Final state of shape `[N, H, V, K]` if `output_final_state=True` else `None`.
+                Final state of shape `[N, H, K, V]` if `output_final_state=True` else `None`.
         """
         assert q.dtype == k.dtype == v.dtype
         assert q.dtype != torch.float32, (

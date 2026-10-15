@@ -102,7 +102,7 @@ class FLW8A8DynamicLinearKernel(Int8ScaledMMLinearKernel):
         import vllm_fl.envs as fl_envs
 
         if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-            from vllm_fl.ops.flaggems_vllm_adapters import scaled_mm
+            from flaggems_vllm import triton_scaled_mm as scaled_mm
         else:
             from flag_gems import scaled_mm
 

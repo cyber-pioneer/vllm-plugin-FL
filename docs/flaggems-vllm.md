@@ -1,10 +1,9 @@
 # FlagGems-vllm fused operators
 
-When enabled, direct FlagGems operator calls dispatch through FlagGems-vllm,
-including activation, rotary, attention, MoE, normalization, scaled matrix
-multiplication, and GDN. General ATen registration continues to use
-`flag_gems.enable()`. Runtime utilities such as device detection and ATen
-registration helpers also remain with FlagGems. Existing attention
+When enabled, selected FlagGems implementations dispatch fused activation,
+rotary, attention,
+and MoE operators through FlagGems-vllm. General ATen
+registration and RMS normalization continue to use FlagGems. Existing attention
 backend selection is preserved: the default service paths use upstream Triton
 or DeepSeek sparse attention unless FlagGems attention is explicitly selected.
 
@@ -25,17 +24,19 @@ The release is https://github.com/flagos-ai/FlagGems-vllm/releases/tag/v0.2.0.
 Every hardware platform's CI setup calls the shared installer with its selected
 Python interpreter. It verifies the source commit in `direct_url.json` and keeps
 the existing Torch, Triton, FlagGems, vLLM, and NumPy versions. NVIDIA CI alone
-requires FlagGems 5.4.0. Eight platforms (CUDA, Hygon, MetaX, MUSA, Enflame,
-Iluvatar, Kunlunxin, and T-Head) are enabled in the CI registry, and their test
-containers set `VLLM_FL_USE_FLAGGEMS_VLLM=1`. Ascend remains disabled with its
-original CI configuration because adaptation to the current version is pending.
-This exercises
-the fused integration through each platform's existing unit, functional,
-inference, serving, and benchmark gates where configured. CUDA model gates
-also run the same inference/serving cases with `0` as a baseline, using the
-same dependencies. Platform compatibility is evaluated by CI; enabling the
-switch does not establish that every release kernel supports every platform.
+requires FlagGems 5.4.0. Eight active platforms (CUDA, Hygon, MetaX, MUSA,
+Enflame, Iluvatar, Kunlunxin, and T-Head) set `VLLM_FL_USE_FLAGGEMS_VLLM=1`
+in their test containers. Ascend retains its original disabled CI configuration
+pending adaptation to the current version. CUDA model gates run the same
+inference/serving cases in both `0` and `1` modes with the same dependencies.
 The release kernel checks remain scoped to NVIDIA CUDA.
+
+Only existing, compatible release operators replace direct FlagGems imports.
+Sunrise attention/MLA and W8A8 scaled-mm imports use the same switch; scaled-mm
+uses the existing `triton_scaled_mm` export under the caller's original name.
+No new operator adapters, state transformations, or composite kernels are added.
+Unsupported or incompatible imports retain their original implementations; see
+[Unsupported direct replacements](flaggems-vllm-unsupported-ops.md).
 
 FlagGems-vllm integration is disabled by default, even when the package is
 installed. Set `VLLM_FL_USE_FLAGGEMS_VLLM=1` before starting vLLM to enable it.
@@ -72,28 +73,10 @@ DeepSeek-V4-Flash FP8 checkpoints require `--kv-cache-dtype fp8` with this
 vLLM version. The validation used tensor parallel size 4. Add `--enforce-eager`
 for eager mode and omit it for the default graph mode.
 
-The plugin's GDN adapters select the pinned release's chunk and recurrent
-operators. They translate vLLM 0.24 V-major states to the selected release
-kernel's layout and preserve in-place state updates. Explicit sequence-to-state
-indices avoid token-offset addressing; padding slots use private scratch state
-and produce zero output without reading or updating the caller's pool.
-The Ascend adapter targets its older K-major FLA contract, but adaptation to
-the current version is still pending and Ascend CI remains disabled. Existing upstream model paths that do not
-call a FlagGems operator retain their original backend selection.
-
-The release exposes add-RMSNorm rather than standalone RMSNorm. The standalone
-adapter supplies a zero residual; the fused residual adapter preserves the
-caller-owned input and residual buffers, including noncontiguous views.
-W8A8 linear uses the release's `triton_scaled_mm` interface. Sunrise attention,
-MLA, scaled-mm, and MoE configuration imports also follow the fused switch;
-Ascend FLA normalization and expert adapters remain unvalidated in this version;
-they are not part of the enabled CI platforms.
-
-FlagGems-vllm v0.2.0 does not export ARM `pack_rhs_qsi4c128p` or
-`w4a8_g128_linear`. Selecting those ARM paths with the fused switch enabled
-raises an explicit unsupported-operator error. They require an upstream release
-implementation; the plugin does not silently call the old FlagGems kernels.
-With the switch disabled, the existing ARM implementations remain available.
+GDN migration is deferred: model GDN paths and the existing plugin adapters
+remain unchanged. The pinned release has kernel-dependent state layouts;
+converging that public contract belongs in the operator library before a future
+plugin migration.
 
 Standard clamped SwiGLU uses the same dispatcher and selection policy as SiLU
 and GELU. Its public `custom_ops` name remains `silu_and_mul_with_clamp`; the

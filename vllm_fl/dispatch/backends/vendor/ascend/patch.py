@@ -64,27 +64,13 @@ def patch_fla_ops():
         import vllm.model_executor.layers.fla.ops.fused_recurrent as _fla_recurrent_lib
         import vllm.model_executor.layers.fla.ops.layernorm_guard as _fla_layernorm_lib
         import vllm.model_executor.models.qwen3_next as _qwen3_next_lib
-        import vllm_fl.envs as fl_envs
-
-        if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-            from functools import partial
-            from vllm_fl.ops import flaggems_vllm_adapters as release_ops
-
-            chunk_gated_delta_rule_fwd = partial(
-                release_ops.chunk_gated_delta_rule_fwd, state_v_major=False
-            )
-            fused_recurrent_gated_delta_rule_fwd = partial(
-                release_ops.fused_recurrent_gated_delta_rule_fwd, state_v_major=False
-            )
-            ascend_LayerNormFn = release_ops.LayerNormFn
-        else:
-            from flag_gems.runtime.backend._ascend.fla import (
-                chunk_gated_delta_rule_fwd,
-                fused_recurrent_gated_delta_rule_fwd,
-            )
-            from flag_gems.runtime.backend._ascend.fla.layernorm_guard import (
-                LayerNormFn as ascend_LayerNormFn,
-            )
+        from flag_gems.runtime.backend._ascend.fla import (
+            chunk_gated_delta_rule_fwd,
+            fused_recurrent_gated_delta_rule_fwd,
+        )
+        from flag_gems.runtime.backend._ascend.fla.layernorm_guard import (
+            LayerNormFn as ascend_LayerNormFn,
+        )
 
         from .impl.fla import chunk_gated_delta_rule_npu
 

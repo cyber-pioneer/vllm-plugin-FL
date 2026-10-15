@@ -7,12 +7,6 @@ import pytest
 import torch
 
 OPS = (
-    "add_rms_norm",
-    "fused_add_rms_norm",
-    "skip_layer_norm",
-    "triton_scaled_mm",
-    "chunk_gated_delta_rule_fwd",
-    "fused_recurrent_gated_delta_rule_fwd",
     "silu_and_mul",
     "silu_and_mul_with_clamp",
     "gelu_and_mul",

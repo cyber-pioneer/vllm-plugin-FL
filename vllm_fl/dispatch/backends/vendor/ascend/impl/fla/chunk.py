@@ -16,15 +16,7 @@ from einops import rearrange
 
 from .l2norm import l2norm_fwd
 from .utils import input_guard
-import vllm_fl.envs as fl_envs
-
-if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-    from functools import partial
-    from vllm_fl.ops.flaggems_vllm_adapters import chunk_gated_delta_rule_fwd as _release_chunk
-
-    chunk_gated_delta_rule_fwd = partial(_release_chunk, state_v_major=False)
-else:
-    from flag_gems.runtime.backend._ascend.fla import chunk_gated_delta_rule_fwd
+from flag_gems.runtime.backend._ascend.fla import chunk_gated_delta_rule_fwd
 
 class ChunkGatedDeltaRuleFunction(torch.autograd.Function):
     @staticmethod

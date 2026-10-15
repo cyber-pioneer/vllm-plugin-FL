@@ -255,14 +255,7 @@ def install_arm_cpu_packed_w4a8() -> bool:
             ):
                 raise RuntimeError("unexpected compressed-tensors G128 parameter shape")
 
-            import vllm_fl.envs as fl_envs
-
-            if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-                from vllm_fl.ops.flaggems_vllm_adapters import required_op
-
-                pack_rhs_qsi4c128p = required_op("pack_rhs_qsi4c128p")
-            else:
-                from flag_gems.quantized_linear import pack_rhs_qsi4c128p
+            from flag_gems.quantized_linear import pack_rhs_qsi4c128p
 
             packed_weight = pack_rhs_qsi4c128p(
                 quantized_nk,
@@ -310,14 +303,7 @@ def install_arm_cpu_packed_w4a8() -> bool:
             if shape is None:
                 return original_apply(self, layer, input, bias)
 
-            import vllm_fl.envs as fl_envs
-
-            if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-                from vllm_fl.ops.flaggems_vllm_adapters import required_op
-
-                w4a8_g128_linear = required_op("w4a8_g128_linear")
-            else:
-                from flag_gems.quantized_linear import w4a8_g128_linear
+            from flag_gems.quantized_linear import w4a8_g128_linear
 
             n, k = shape
             source_dtype = input.dtype
