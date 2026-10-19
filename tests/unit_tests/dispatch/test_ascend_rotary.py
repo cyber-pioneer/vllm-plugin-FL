@@ -383,10 +383,11 @@ def test_flaggems_six_argument_rotary_preserves_inplace_contract(monkeypatch):
     assert len(calls) == 3
 
 
+@pytest.mark.parametrize("mode", ["0", "1"])
 @pytest.mark.parametrize("inplace", [False, True])
 @pytest.mark.parametrize("interleaved", [False, True])
 def test_flaggems_six_argument_rotary_compacts_packed_partial_views(
-    monkeypatch, inplace, interleaved
+    monkeypatch, inplace, interleaved, mode
 ):
     def ascend_apply_rotary_pos_emb(
         query, key, cos, sin, position_ids=None, rotary_interleaved=False
@@ -410,6 +411,7 @@ def test_flaggems_six_argument_rotary_compacts_packed_partial_views(
         ascend_apply_rotary_pos_emb,
         lambda *args, **kwargs: pytest.fail("unexpected common RoPE wrapper"),
     )
+    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", mode)
     flaggems_rotary._supports_inplace_argument.cache_clear()
 
     # Q and K use only the first eight dimensions of packed QKV heads. The

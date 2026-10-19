@@ -51,11 +51,6 @@ def rotary_embedding_flaggems(
     import flag_gems
     from flag_gems.config import use_c_extension
 
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import apply_rotary_pos_emb as gems_rope_forward
-    else:
-        from flag_gems.modules.rotary_embedding import gems_rope_forward
-
     # The official Ascend implementation in the qwen-vllm_for_ascend branch
     # exposes a six-argument apply_rotary_pos_emb without ``inplace``.  The
     # common Gems wrapper assumes the seven-argument API when the C extension
@@ -63,8 +58,7 @@ def rotary_embedding_flaggems(
     # directly in that case. Keep the caller's mutation contract: this kernel
     # always allocates outputs, and inplace=True requires copying them back.
     if (
-        not fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM
-        and getattr(flag_gems, "vendor_name", None) == "ascend"
+        getattr(flag_gems, "vendor_name", None) == "ascend"
         and not use_c_extension
         and not _supports_inplace_argument(flag_gems.apply_rotary_pos_emb)
     ):
@@ -89,6 +83,11 @@ def rotary_embedding_flaggems(
                 key.copy_(k_embed)
             return query, key
         return q_embed, k_embed
+
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import apply_rotary_pos_emb as gems_rope_forward
+    else:
+        from flag_gems.modules.rotary_embedding import gems_rope_forward
 
     return gems_rope_forward(
         query,

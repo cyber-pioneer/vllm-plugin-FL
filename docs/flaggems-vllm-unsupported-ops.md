@@ -14,10 +14,11 @@ modes. Missing interface requests are tracked in
 | `w4a8_g128_linear` | `vllm_fl/quantization/arm_cpu_w4a8.py` | No corresponding ARM W4A8 execution export exists. |
 | `chunk_gated_delta_rule_fwd` | `vllm_fl/ops/fla/chunk.py` | The export exists, but a compatible state-layout and vendor contract has not been established for the current vLLM integration. Preserve the branch's existing path instead of adding state conversions. |
 | `fused_recurrent_gated_delta_rule_fwd` | `vllm_fl/ops/fla/fused_recurrent.py` | The export exists, but state addressing, padding, and layout require separate compatibility validation. |
-| Ascend vendor-specific FLA/MoE implementations | `vllm_fl/dispatch/backends/vendor/ascend/` | Preserve the independently validated vLLM 0.28 Ascend implementation. Ascend CI does not enable the optional provider. This is a platform exclusion, not a claim that every generic operator is absent. |
+| Ascend six-argument `apply_rotary_pos_emb` without the C extension | `vllm_fl/dispatch/backends/flaggems/impl/rotary.py` | The generic v0.2.0 in-place export returns new Tensor views, violating this branch's Q/K object-identity contract for packed partial-RoPE views (Ascend CI job 118173438493). Retain the existing Ascend compatibility path in both modes; no new copy or conversion adapter is introduced. |
+| Ascend vendor-specific FLA/MoE implementations | `vllm_fl/dispatch/backends/vendor/ascend/` | Preserve the independently validated vLLM 0.28 Ascend implementation. Ascend CI enables the optional provider for compatible generic imports; these vendor-specific implementations remain unchanged. |
 
 ATen registration (`flag_gems.enable()`), device detection, runtime utilities,
 and backend launch/configuration helpers remain in FlagGems. They are not
 explicit fused-operator replacements. The existing native CUDA attention
-selection is preserved. The NVIDIA policy documents its temporary ATen `mm`
-exclusion separately from these explicit-interface limitations.
+selection is preserved. The NVIDIA policy retains its baseline ATen exclusions; `mm` and `mm_out`
+are enabled under the default policy with FlagGems v5.4.0.
