@@ -13,7 +13,6 @@ from vllm_fl.dispatch.backends.flaggems.impl.quantization import (
 
 
 def _install_flaggems_vllm_quant_module(monkeypatch, quant_fn):
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "1")
     package = ModuleType("flaggems_vllm")
     package.__path__ = []
     ops_package = ModuleType("flaggems_vllm.ops")

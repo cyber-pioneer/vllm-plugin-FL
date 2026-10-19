@@ -1,9 +1,9 @@
 # Optional FlagGems-vllm operators
 
 `VLLM_FL_USE_FLAGGEMS_VLLM` selects the provider for compatible, explicit
-operator imports. It defaults to `0`; `flag_gems.enable()` continues to own
-ATen registration in both modes. The native vLLM 0.28 runner and graph mode
-are retained. The NVIDIA policy temporarily keeps ATen `mm` native to avoid
+FlagGems operator imports migrated by this change. It defaults to `0`;
+`flag_gems.enable()` continues to own ATen registration in both modes. The
+native vLLM 0.28 runner and graph mode are retained. The NVIDIA policy temporarily keeps ATen `mm` native to avoid
 an intermittent H100 mixed multimodal correctness failure with the image's
 FlagGems revision. Its five existing exclusions and `flag_gems.enable()` are
 preserved.
@@ -35,8 +35,10 @@ revision with the vLLM 0.24 branch's runtime.
 
 Use `-e VLLM_FL_USE_FLAGGEMS_VLLM=1` when starting a Docker container. Unset the
 variable or set it to `0` before starting a new process to use the original
-providers. Enabling this variable requires the optional package; importing the
-plugin with the default setting does not require it.
+providers for these migrated calls. Enabling this variable requires the
+FlagGems-vllm package. The pre-existing dynamic INT8 quantization path already
+calls FlagGems-vllm independently of this switch, so `0` is not a process-wide
+disable of that package.
 
 ## Confirm activation
 
@@ -53,11 +55,16 @@ export lookup alone does not prove that a model executed a particular kernel.
 
 ## Migration scope
 
-Compatible activation, attention/cache, MLA, RoPE, MoE, scaled INT8
-quantization, W8A8 scaled GEMM, and fused-experts calls select existing
-FlagGems-vllm exports. W8A8 linear imports `triton_scaled_mm` under its existing
-`scaled_mm` call name. The operators receive the existing arguments; this
+Compatible activation, attention/cache, MLA, RoPE, MoE, W8A8 scaled GEMM,
+and fused-experts calls select existing FlagGems-vllm exports. W8A8 linear
+imports `triton_scaled_mm` under its existing `scaled_mm` call name. The operators receive the existing arguments; this
 migration adds no state-layout converters or composite fallback operators.
+
+Dynamic per-token INT8 quantization retains its baseline dispatch chain:
+FlagGems-vllm `scaled_int8_quant`, then the in-tree Triton implementation,
+then the PyTorch reference if dispatch falls back after an error. The local
+Triton kernel and the existing FlagGems-vllm entry are unchanged; neither is
+part of this interface migration or controlled by the new switch.
 
 The switch changes the provider of existing explicit operator calls. It does
 not enable OOT activations, change `compilation_config.custom_ops`, or add

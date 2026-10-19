@@ -18,20 +18,6 @@ def test_optional_fused_provider_defaults_off(monkeypatch, value, expected):
     assert envs.VLLM_FL_USE_FLAGGEMS_VLLM is expected
 
 
-def test_default_quantization_does_not_import_optional_package(monkeypatch):
-    from vllm_fl.dispatch.backends.flaggems.impl import quantization
-
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "0")
-    monkeypatch.setitem(sys.modules, "flaggems_vllm", None)
-    value, expected = object(), (object(), object())
-    monkeypatch.setattr(
-        quantization,
-        "dynamic_per_token_quant_int8_flaggems_triton",
-        lambda x: expected if x is value else None,
-    )
-    assert quantization.dynamic_per_token_quant_int8_flaggems_vllm(value) is expected
-
-
 @pytest.mark.parametrize("mode", ["0", "1"])
 def test_fused_experts_selects_provider_without_changing_arguments(monkeypatch, mode):
     from vllm_fl.quantization.w8a8 import moe_experts

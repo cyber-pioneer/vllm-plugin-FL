@@ -5,8 +5,6 @@
 from __future__ import annotations
 
 import torch
-
-import vllm_fl.envs as fl_envs
 import triton
 import triton.language as tl
 from flag_gems.runtime import torch_device_fn
@@ -63,9 +61,6 @@ def dynamic_per_token_quant_int8_flaggems_vllm(
     Import and runtime failures propagate to dispatch, which then tries the
     local FlagGems/Triton implementation before the PyTorch reference.
     """
-    if not fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        return dynamic_per_token_quant_int8_flaggems_triton(x)
-
     from flaggems_vllm.ops.scaled_int8_quant import scaled_int8_quant
 
     output, scale, _ = scaled_int8_quant(
