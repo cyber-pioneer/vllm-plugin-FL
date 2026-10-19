@@ -5,6 +5,13 @@ set -euo pipefail
 
 git config --global --add safe.directory "$(pwd)"
 
+# Keep the image's Torch/FlagTree/vLLM stack; replace only FlagGems.
+if ! python .github/scripts/cuda/check_flaggems.py; then
+    uv pip install --system --break-system-packages --no-build-isolation --no-deps \
+        "flag-gems @ git+https://github.com/flagos-ai/FlagGems.git@v5.4.0"
+fi
+python .github/scripts/cuda/check_flaggems.py
+
 uv pip install \
     --system \
     --break-system-packages \

@@ -44,13 +44,10 @@ op_backends:
     - reference
 
 # FlagOS operators with a reproducible NVIDIA correctness failure under the
-# supported FlagTree/Triton 3.6 environment. Entries are checked with operator
-# or model correctness gates; removals require real dense and MoE inference.
+# supported FlagTree/Triton 3.6 environment. Each entry was reproduced
+# independently against native PyTorch, and removals are revalidated with real
+# dense and MoE model inference.
 flagos_blacklist:
-  # H100 / FlagGems 5.3.5 intermittently produces repeated punctuation in
-  # Qwen3.6-27B eager mixed multimodal batches. Keeping only ATen mm native
-  # passes the complete five-case gate while fused operators remain enabled.
-  - mm
   # BF16 largest and smallest selections return incorrect indices on A800.
   - topk
   # Gemma3n grouped-query vision attention reshapes KV heads incorrectly.

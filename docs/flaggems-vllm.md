@@ -3,10 +3,9 @@
 `VLLM_FL_USE_FLAGGEMS_VLLM` selects the provider for compatible, explicit
 FlagGems operator imports migrated by this change. It defaults to `0`;
 `flag_gems.enable()` continues to own ATen registration in both modes. The
-native vLLM 0.28 runner and graph mode are retained. The NVIDIA policy temporarily keeps ATen `mm` native to avoid
-an intermittent H100 mixed multimodal correctness failure with the image's
-FlagGems revision. Its five existing exclusions and `flag_gems.enable()` are
-preserved.
+native vLLM 0.28 runner and graph mode are retained. NVIDIA CI uses FlagGems
+v5.4.0 at commit `6ed2f39071ef85db26b7e64f0652a162f434959c` and retains the
+baseline NVIDIA blacklist, without the migration's temporary `mm` exclusion.
 
 ## Install in the validated NVIDIA image
 
@@ -20,8 +19,7 @@ In a container with this checkout mounted at `/workspace/vllm-plugin-FL`:
 
 ```bash
 cd /workspace/vllm-plugin-FL
-uv pip install --system --break-system-packages --no-build-isolation --no-deps -e .
-python3 .github/scripts/install_flaggems_vllm.py
+bash .github/scripts/cuda/setup.sh
 export VLLM_FL_USE_FLAGGEMS_VLLM=1
 ```
 
@@ -30,8 +28,9 @@ The installer pins FlagGems-vllm **v0.2.0**, commit
 metadata `0.1.0`; the installer checks the Git repository and commit in
 `direct_url.json`. It installs with `--no-deps --no-build-isolation` and
 checks that the existing Torch, FlagTree/Triton, FlagGems, vLLM, and NumPy
-versions are preserved. It does not replace the image's validated FlagGems
-revision with the vLLM 0.24 branch's runtime.
+versions are preserved by that installer. NVIDIA CI first upgrades only
+FlagGems to tag `v5.4.0` with `--no-deps --no-build-isolation` and verifies its
+Git provenance; the remaining image runtime packages are preserved.
 
 Use `-e VLLM_FL_USE_FLAGGEMS_VLLM=1` when starting a Docker container. Unset the
 variable or set it to `0` before starting a new process to use the original
@@ -79,11 +78,12 @@ validated Ascend vendor paths retain their existing implementations.
 
 ## CI and local verification
 
-Every platform's setup installs the pinned optional package without upgrading
-its vendor runtime. Platform enable/disable settings are preserved. Ascend is
-not opted into FlagGems-vllm; its existing vLLM 0.28 CI remains unchanged in
-provider selection. Other platform configs set the switch to `1`; a disabled
-platform remains disabled.
+Every platform's setup installs the pinned optional package. All nine platform
+CI configs, including Ascend, set `VLLM_FL_USE_FLAGGEMS_VLLM=1`. Platform CI
+enable/disable settings are preserved; a disabled platform remains disabled.
+THead also sets the switch in its test job environment so repository overrides
+of its container options do not remove the opt-in. Only NVIDIA CI updates
+FlagGems to v5.4.0; the other platforms retain their vendor runtime versions.
 
 CUDA E2E matrices execute the original cases with both switch values, with
 separate job and artifact names. Locally, run the same tests in new processes:
