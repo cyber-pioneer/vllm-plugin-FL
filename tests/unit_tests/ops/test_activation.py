@@ -4,7 +4,6 @@
 Tests for activation ops.
 """
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -107,57 +106,3 @@ def test_cuda_layer_call_dispatches_to_cached_op(
 
     cached_op.assert_called_once_with(layer, x)
     assert result is expected
-
-
-def test_compile_opt_in_preserves_explicit_operator_controls(monkeypatch):
-    from vllm_fl.ops.activation import enable_fused_activations_for_compile
-
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "0")
-    config = SimpleNamespace(custom_ops=["none"])
-    enable_fused_activations_for_compile(config)
-    assert config.custom_ops == ["none"]
-
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "1")
-    monkeypatch.setenv("VLLM_FL_OOT_WHITELIST", "silu_and_mul,gelu_and_mul")
-    config = SimpleNamespace(custom_ops=["none", "-GeluAndMul"])
-    enable_fused_activations_for_compile(config)
-    enable_fused_activations_for_compile(config)
-    assert config.custom_ops == ["none", "-GeluAndMul", "+SiluAndMul"]
-
-    monkeypatch.delenv("VLLM_FL_OOT_WHITELIST")
-    monkeypatch.setenv("VLLM_FL_OOT_BLACKLIST", "silu_and_mul")
-    blocked = SimpleNamespace(custom_ops=["none", "-GeluAndMul"])
-    enable_fused_activations_for_compile(blocked)
-    assert blocked.custom_ops == ["none", "-GeluAndMul"]
-
-
-@pytest.mark.parametrize("kind", ["silu", "gelu"])
-def test_compiled_activation_keeps_runtime_dispatch(monkeypatch, kind):
-    """Full-graph tracing must retain provider calls for subsequent inputs."""
-    import vllm_fl.ops.activation as activation
-
-    calls = []
-
-    def reference(x):
-        a, b = x.chunk(2, dim=-1)
-        fn = (
-            torch.nn.functional.silu
-            if kind == "silu"
-            else (lambda value: torch.nn.functional.gelu(value, approximate="tanh"))
-        )
-        return fn(a) * b
-
-    def dispatch(obj, x):
-        calls.append(getattr(obj, "approximate", None))
-        return reference(x)
-
-    monkeypatch.setattr(activation, f"_{kind}_and_mul", dispatch)
-    cls = activation.SiluAndMulFL if kind == "silu" else activation.GeluAndMulFL
-    obj = SimpleNamespace(approximate="tanh")
-    compiled = torch.compile(
-        lambda x: cls.forward_oot(obj, x), backend="eager", fullgraph=True
-    )
-    for _ in range(2):
-        x = torch.randn(3, 16)
-        torch.testing.assert_close(compiled(x), reference(x))
-    assert calls == ([None, None] if kind == "silu" else ["tanh", "tanh"])

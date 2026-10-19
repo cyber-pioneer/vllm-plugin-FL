@@ -37,7 +37,6 @@ def _make_ascend_vllm_config(
         ),
         cache_config=SimpleNamespace(block_size=128),
         compilation_config=SimpleNamespace(
-            custom_ops=["none"],
             backend=backend,
             mode=compilation_mode,
             compile_sizes=None,

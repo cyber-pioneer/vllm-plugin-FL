@@ -59,13 +59,12 @@ FlagGems-vllm exports. W8A8 linear imports `triton_scaled_mm` under its existing
 `scaled_mm` call name. The operators receive the existing arguments; this
 migration adds no state-layout converters or composite fallback operators.
 
-vLLM's default Inductor configuration disables custom activations. With the
-optional provider enabled, the plugin selects the existing SiLU/GELU custom
-operators and keeps their dispatch calls opaque to compilation. This prevents
-the native formula from replacing the selected provider in graph mode.
-The compile opt-in respects explicit custom-operator exclusions and OOT
-allow/deny controls;
-the default switch value preserves the original compilation selection.
+The switch changes the provider of existing explicit operator calls. It does
+not enable OOT activations, change `compilation_config.custom_ops`, or add
+custom compilation boundaries. Upstream vLLM and the existing dispatch policy
+continue to decide which operator entry points execute. When the upstream
+configuration selects native activation formulas in graph mode, enabling this
+switch does not force those formulas through FlagGems-vllm.
 
 See [interfaces retained from FlagGems](flaggems-vllm-unsupported-ops.md) for
 missing or incompatible APIs. Device detection, runtime helpers, and the
