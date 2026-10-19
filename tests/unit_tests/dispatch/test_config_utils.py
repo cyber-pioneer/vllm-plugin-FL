@@ -23,6 +23,7 @@ def test_hopper_optimization_is_disabled_by_default(monkeypatch):
     assert path.name == "nvidia.yaml"
     assert config["op_backends"]["attention_backend"][0] == "flagos"
     assert config["flagos_blacklist"] == [
+        "mm",
         "topk",
         "_scaled_dot_product_attention_math",
         "maximum",
@@ -55,7 +56,8 @@ def test_non_hopper_nvidia_keeps_vendor_wide_config(monkeypatch):
     assert path is not None
     assert path.name == "nvidia.yaml"
     assert config["op_backends"]["attention_backend"][0] == "flagos"
-    assert "mm" not in config["flagos_blacklist"]
+    assert "mm" in config["flagos_blacklist"]
+    assert "mm_out" not in config["flagos_blacklist"]
 
 
 def test_capability_probe_failure_falls_back_to_vendor_config(monkeypatch):

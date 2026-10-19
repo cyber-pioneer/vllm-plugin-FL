@@ -141,7 +141,9 @@ def test_w8a8_linear_policy_disable_falls_back_to_native_candidate(monkeypatch):
     assert "disabled by policy" in reason
 
 
-def test_w8a8_linear_quantizes_then_calls_flaggems_scaled_mm(monkeypatch):
+@pytest.mark.parametrize("fused_mode", ["0", "1"])
+def test_w8a8_linear_quantizes_then_calls_flaggems_scaled_mm(monkeypatch, fused_mode):
+    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", fused_mode)
     calls = []
     x = torch.ones((2, 4), dtype=torch.bfloat16)
     x_q = torch.ones((2, 4), dtype=torch.int8)
@@ -163,6 +165,9 @@ def test_w8a8_linear_quantizes_then_calls_flaggems_scaled_mm(monkeypatch):
 
     flag_gems.scaled_mm = fake_scaled_mm
     monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
+    fused = ModuleType("flaggems_vllm")
+    fused.triton_scaled_mm = fake_scaled_mm
+    monkeypatch.setitem(sys.modules, "flaggems_vllm", fused)
 
     kernel = object.__new__(linear.FLW8A8DynamicLinearKernel)
     kernel.layer_param_names = [
@@ -195,9 +200,12 @@ def test_w8a8_linear_quantizes_then_calls_flaggems_scaled_mm(monkeypatch):
     }
 
 
+@pytest.mark.parametrize("fused_mode", ["0", "1"])
 def test_w8a8_linear_weight_layout_and_numerics_match_flaggems_contract(
     monkeypatch,
+    fused_mode,
 ):
+    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", fused_mode)
     checkpoint_weight = torch.tensor(
         [
             [12, -7, 3, 9],
@@ -280,6 +288,9 @@ def test_w8a8_linear_weight_layout_and_numerics_match_flaggems_contract(
 
     flag_gems.scaled_mm = fake_scaled_mm
     monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
+    fused = ModuleType("flaggems_vllm")
+    fused.triton_scaled_mm = fake_scaled_mm
+    monkeypatch.setitem(sys.modules, "flaggems_vllm", fused)
 
     actual = kernel.apply_weights(layer, x, bias)
 

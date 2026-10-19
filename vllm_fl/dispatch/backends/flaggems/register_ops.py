@@ -11,8 +11,14 @@ from __future__ import annotations
 
 import functools
 
+from vllm.logger import init_logger
+
+import vllm_fl.envs as fl_envs
+
 from vllm_fl.dispatch.types import BackendImplKind, BackendPriority, OpImpl
 from vllm_fl.utils import use_flaggems_op
+
+logger = init_logger(__name__)
 
 
 def _bind_is_available(fn, is_available_fn):
@@ -34,6 +40,15 @@ def register_builtins(registry) -> None:
         registry: Registry to register into
     """
     from .flaggems import FlagGemsBackend
+
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        import flaggems_vllm
+
+        logger.info_once(
+            "FlagGems-vllm integration activated: VLLM_FL_USE_FLAGGEMS_VLLM=1, "
+            "package=%s",
+            getattr(flaggems_vllm, "__file__", "<unknown>"),
+        )
 
     backend = FlagGemsBackend()
     is_avail = backend.is_available

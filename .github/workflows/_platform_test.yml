@@ -137,6 +137,7 @@ jobs:
     with:
       platform: ${{ inputs.platform }}
       task: ${{ matrix.test.task }}
+      flaggems_vllm: ${{ matrix.test.flaggems_vllm || '' }}
       device: ${{ matrix.test.device }}
       cases: ${{ matrix.test.cases }}
       ci_image: ${{ matrix.test.image || fromJson(needs.setup.outputs.config).ci_image }}

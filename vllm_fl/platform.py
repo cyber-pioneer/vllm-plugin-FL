@@ -298,6 +298,9 @@ class PlatformFL(Platform):
         from vllm.config.compilation import CompilationMode
 
         compilation_config = vllm_config.compilation_config
+        from vllm_fl.ops.activation import enable_fused_activations_for_compile
+
+        enable_fused_activations_for_compile(compilation_config)
         if compilation_config.compile_sizes is None:
             compilation_config.compile_sizes = []
 

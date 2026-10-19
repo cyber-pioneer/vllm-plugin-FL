@@ -144,6 +144,7 @@ def test_platform_accepts_v2_model_runner(monkeypatch):
         scheduler_config=SimpleNamespace(),
         cache_config=None,
         compilation_config=SimpleNamespace(
+            custom_ops=["none"],
             compile_sizes=[],
             cudagraph_mode=CUDAGraphMode.NONE,
         ),
@@ -174,7 +175,8 @@ def test_nvidia_platform_keeps_native_cuda_semantics():
 
 @skip_if_not_nvidia
 @skip_if_no_native_cuda_ext
-def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch):
+@pytest.mark.parametrize("fused_mode", ["0", "1"])
+def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch, fused_mode):
     pytest.importorskip("vllm._C_stable_libtorch", exc_type=ImportError)
     from types import SimpleNamespace
     from unittest.mock import patch
@@ -187,11 +189,15 @@ def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch):
         worker_cls=None,
         disable_custom_all_reduce=True,
     )
-    vllm_config = SimpleNamespace(parallel_config=parallel_config)
+    vllm_config = SimpleNamespace(
+        parallel_config=parallel_config,
+        compilation_config=SimpleNamespace(custom_ops=["none"]),
+    )
 
     with monkeypatch.context() as state:
         state.setattr(NvidiaPlatformFL, "dist_backend", NvidiaPlatformFL.dist_backend)
         state.delenv("FLAGCX_PATH", raising=False)
+        state.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", fused_mode)
         with patch.object(CudaPlatform, "check_and_update_config") as native_update:
             NvidiaPlatformFL.check_and_update_config(vllm_config)
 
@@ -199,6 +205,9 @@ def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch):
 
     assert parallel_config.worker_cls == "vllm_fl.worker.worker.NvidiaWorkerFL"
     assert parallel_config.disable_custom_all_reduce is True
+    assert vllm_config.compilation_config.custom_ops == (
+        ["none", "+SiluAndMul", "+GeluAndMul"] if fused_mode == "1" else ["none"]
+    )
     native_update.assert_called_once_with(vllm_config)
 
 
@@ -253,7 +262,10 @@ def test_nvidia_platform_uses_flagcx_when_configured(monkeypatch):
         worker_cls=None,
         disable_custom_all_reduce=False,
     )
-    vllm_config = SimpleNamespace(parallel_config=parallel_config)
+    vllm_config = SimpleNamespace(
+        parallel_config=parallel_config,
+        compilation_config=SimpleNamespace(custom_ops=["none"]),
+    )
 
     # Importing the platform before changing the environment mirrors unit tests
     # that dynamically select FlagCX in an already-running Python process.

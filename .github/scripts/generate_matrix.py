@@ -128,6 +128,10 @@ def build_e2e_matrix(
                 "timeout": timeout,
             }
         )
+    if config.get("platform") == "cuda":
+        entries = [
+            dict(entry, flaggems_vllm=mode) for entry in entries for mode in ("0", "1")
+        ]
     return entries
 
 

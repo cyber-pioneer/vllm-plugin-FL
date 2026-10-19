@@ -2,6 +2,8 @@ from typing import Any
 
 import torch
 
+import vllm_fl.envs as fl_envs
+
 import vllm.envs as envs
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm._aiter_ops import rocm_aiter_ops
@@ -361,10 +363,13 @@ class TritonExpertsFL(TritonExperts):
 
         # Fast path (no LoRA, NVIDIA only): single fused FlagGems call.
         if self._lora_context is None and current_platform.is_cuda():
-            import flag_gems
+            if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+                from flaggems_vllm import fused_experts_impl
+            else:
+                from flag_gems import fused_experts_impl
 
             output.copy_(
-                flag_gems.fused_experts_impl(
+                fused_experts_impl(
                     hidden_states,
                     w1,
                     w2,

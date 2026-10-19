@@ -34,6 +34,9 @@ class NvidiaPlatformFL(CudaPlatform):
     def check_and_update_config(cls, vllm_config: "VllmConfig") -> None:
         use_flagcx = cls._refresh_dist_backend()
         super().check_and_update_config(vllm_config)
+        from vllm_fl.ops.activation import enable_fused_activations_for_compile
+
+        enable_fused_activations_for_compile(vllm_config.compilation_config)
         if use_flagcx:
             vllm_config.parallel_config.disable_custom_all_reduce = True
         vllm_config.parallel_config.worker_cls = "vllm_fl.worker.worker.NvidiaWorkerFL"

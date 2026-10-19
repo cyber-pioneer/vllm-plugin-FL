@@ -11,6 +11,8 @@ import inspect
 
 import torch
 
+import vllm_fl.envs as fl_envs
+
 
 @functools.cache
 def _supports_inplace_argument(fn) -> bool:
@@ -48,7 +50,11 @@ def rotary_embedding_flaggems(
     """
     import flag_gems
     from flag_gems.config import use_c_extension
-    from flag_gems.modules.rotary_embedding import gems_rope_forward
+
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import apply_rotary_pos_emb as gems_rope_forward
+    else:
+        from flag_gems.modules.rotary_embedding import gems_rope_forward
 
     # The official Ascend implementation in the qwen-vllm_for_ascend branch
     # exposes a six-argument apply_rotary_pos_emb without ``inplace``.  The
@@ -57,7 +63,8 @@ def rotary_embedding_flaggems(
     # directly in that case. Keep the caller's mutation contract: this kernel
     # always allocates outputs, and inplace=True requires copying them back.
     if (
-        getattr(flag_gems, "vendor_name", None) == "ascend"
+        not fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM
+        and getattr(flag_gems, "vendor_name", None) == "ascend"
         and not use_c_extension
         and not _supports_inplace_argument(flag_gems.apply_rotary_pos_emb)
     ):

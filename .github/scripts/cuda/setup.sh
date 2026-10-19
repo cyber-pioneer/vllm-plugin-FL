@@ -12,6 +12,8 @@ uv pip install \
     --no-deps \
     -e .
 
+python .github/scripts/install_flaggems_vllm.py
+
 python - <<'PY'
 from importlib.metadata import PackageNotFoundError, version
 

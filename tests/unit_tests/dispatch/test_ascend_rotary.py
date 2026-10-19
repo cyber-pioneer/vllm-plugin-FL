@@ -80,6 +80,8 @@ def _install_fake_flaggems(
     vendor_name="ascend",
     use_c_extension=False,
 ):
+    # These tests exercise the original vendor-specific FlagGems wrappers.
+    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "0")
     flag_gems = ModuleType("flag_gems")
     flag_gems.__path__ = []
     flag_gems.apply_rotary_pos_emb = apply_rotary

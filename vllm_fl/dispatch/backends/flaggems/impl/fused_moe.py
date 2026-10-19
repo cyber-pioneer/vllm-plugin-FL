@@ -6,6 +6,8 @@ FlagGems fused moe operator implementations.
 
 import torch
 
+import vllm_fl.envs as fl_envs
+
 from vllm.triton_utils import triton
 from vllm.utils.math_utils import round_up
 
@@ -18,7 +20,10 @@ def moe_align_block_size_flaggems(
     pad_sorted_ids: bool = False,
     ignore_invalid_experts: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    from flag_gems import moe_align_block_size_triton
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import moe_align_block_size_triton
+    else:
+        from flag_gems import moe_align_block_size_triton
 
     max_num_tokens_padded = topk_ids.numel() + num_experts * (block_size - 1)
     if pad_sorted_ids:
@@ -55,7 +60,10 @@ def moe_align_block_size_flaggems(
 def topk_softmax_flaggems(
     topk_weights, topk_indices, token_expert_indices, gating_output, renormalize=False
 ):
-    from flag_gems import topk_softmax
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import topk_softmax
+    else:
+        from flag_gems import topk_softmax
 
     # FlagGems' fused renormalization corrupts the first token on Ascend when
     # the routed token count exceeds 48. The non-renormalizing kernel is
@@ -103,7 +111,10 @@ def invoke_fused_moe_triton_kernel_flaggems(
     block_shape=None,
     B_bias=None,
 ):
-    from flag_gems import invoke_fused_moe_triton_kernel
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import invoke_fused_moe_triton_kernel
+    else:
+        from flag_gems import invoke_fused_moe_triton_kernel
 
     invoke_fused_moe_triton_kernel(
         A,
@@ -139,7 +150,10 @@ def grouped_topk_flaggems(
     bias,
     scoring_func=0,
 ):
-    from flag_gems import grouped_topk
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import grouped_topk
+    else:
+        from flag_gems import grouped_topk
 
     return grouped_topk(
         scores,
@@ -154,6 +168,9 @@ def grouped_topk_flaggems(
 
 
 def moe_sum_flaggems(inp, out):
-    from flag_gems import moe_sum
+    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
+        from flaggems_vllm import moe_sum
+    else:
+        from flag_gems import moe_sum
 
     moe_sum(inp, out)
