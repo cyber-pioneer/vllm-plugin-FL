@@ -48,10 +48,11 @@ export lookup alone does not prove that a model executed a particular kernel.
 
 ## Migration scope
 
-Compatible activation, attention/cache, MLA, RoPE, MoE, W8A8 scaled GEMM,
-and fused-experts calls select existing FlagGems-vllm exports. W8A8 linear
-imports `triton_scaled_mm` under its existing `scaled_mm` call name. The operators receive the existing arguments; this
-migration adds no state-layout converters or composite fallback operators.
+Compatible activation, attention/cache, MLA, RoPE, MoE and fused-experts calls
+use existing FlagGems-vllm exports with the existing arguments. W8A8 linear
+retains `flag_gems.scaled_mm`: FlagGems-vllm currently has no compatible
+replacement API. A TODO marks this call for future migration. This migration
+adds no state-layout converters or composite fallback operators.
 
 Dynamic per-token INT8 quantization retains its baseline dispatch chain:
 FlagGems-vllm `scaled_int8_quant`, then the in-tree Triton implementation,

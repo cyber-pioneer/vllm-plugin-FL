@@ -160,9 +160,9 @@ def test_w8a8_linear_quantizes_then_calls_flaggems_scaled_mm(monkeypatch):
         calls.append((args, kwargs))
         return expected
 
-    fused = ModuleType("flaggems_vllm")
-    fused.triton_scaled_mm = fake_scaled_mm
-    monkeypatch.setitem(sys.modules, "flaggems_vllm", fused)
+    flag_gems = ModuleType("flag_gems")
+    flag_gems.scaled_mm = fake_scaled_mm
+    monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
 
     kernel = object.__new__(linear.FLW8A8DynamicLinearKernel)
     kernel.layer_param_names = [
@@ -277,9 +277,9 @@ def test_w8a8_linear_weight_layout_and_numerics_match_flaggems_contract(
             output += bias.reshape(1, -1)
         return output.to(out_dtype)
 
-    fused = ModuleType("flaggems_vllm")
-    fused.triton_scaled_mm = fake_scaled_mm
-    monkeypatch.setitem(sys.modules, "flaggems_vllm", fused)
+    flag_gems = ModuleType("flag_gems")
+    flag_gems.scaled_mm = fake_scaled_mm
+    monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
 
     actual = kernel.apply_weights(layer, x, bias)
 

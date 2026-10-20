@@ -1,7 +1,8 @@
 # Copyright 2026 FlagOS Contributors
-"""Compare the three migrated APIs against the NVIDIA FlagGems baseline.
+"""Compare migrated APIs and a deferred GEMM candidate with NVIDIA FlagGems.
 
-These tests cover the plugin's actual call subset, not equivalence of every
+Scaled GEMM remains on FlagGems until a compatible replacement is available.
+These comparisons cover the plugin's call subset, not equivalence of every
 optional argument or vendor implementation. Ascend's retained RoPE path has
 its own contract tests in test_ascend_rotary.py.
 """
