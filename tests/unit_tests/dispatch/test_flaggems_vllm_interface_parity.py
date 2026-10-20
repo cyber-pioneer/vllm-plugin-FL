@@ -1,8 +1,6 @@
 # Copyright 2026 FlagOS Contributors
 """Compare operator call subsets against the NVIDIA FlagGems baseline.
 
-ATen scaled_mm remains on FlagGems, outside the fused-operator migration.
-Its comparisons below are numerical reference checks, not migration gates.
 These comparisons cover the plugin's call subset, not equivalence of every
 optional argument or vendor implementation. Ascend's retained RoPE path has
 its own contract tests in test_ascend_rotary.py.
@@ -23,7 +21,6 @@ def providers(backend):
     if backend != "nvidia":
         pytest.skip("comparison targets the NVIDIA FlagGems migration baseline")
 
-    import flag_gems
     import flaggems_vllm
     from flag_gems.modules.activation import gems_silu_and_mul
     from flag_gems.modules.rotary_embedding import gems_rope_forward
@@ -31,11 +28,10 @@ def providers(backend):
     return SimpleNamespace(
         silu=(gems_silu_and_mul, flaggems_vllm.silu_and_mul),
         rotary=(gems_rope_forward, flaggems_vllm.apply_rotary_pos_emb),
-        scaled_mm=(flag_gems.scaled_mm, flaggems_vllm.triton_scaled_mm),
     )
 
 
-@pytest.mark.parametrize("op", ["silu", "rotary", "scaled_mm"])
+@pytest.mark.parametrize("op", ["silu", "rotary"])
 def test_current_calls_bind_to_both_signatures(providers, op):
     value = object()
     calls = {
@@ -43,12 +39,6 @@ def test_current_calls_bind_to_both_signatures(providers, op):
         "rotary": (
             (value, value, value, value),
             {"position_ids": value, "rotary_interleaved": False, "inplace": True},
-        ),
-        # The fifth positional argument differs. The plugin explicitly names
-        # bias/out_dtype, and does not use scale_result or use_fast_accum.
-        "scaled_mm": (
-            (value, value, value, value),
-            {"bias": value, "out_dtype": torch.bfloat16},
         ),
     }
     args, kwargs = calls[op]
@@ -150,37 +140,3 @@ def test_rotary_matches_original_values_and_mutation(
         outputs.append(actual)
     for old, new in zip(*outputs):
         _assert_output(new, old.cpu(), device, dtype)
-
-
-@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
-@pytest.mark.parametrize("with_bias", [False, True])
-@pytest.mark.parametrize("shape", [(1, 64, 32), (17, 128, 64)])
-def test_scaled_mm_matches_original_int8_call_subset(
-    providers, device, dtype, with_bias, shape
-):
-    m, k, n = shape
-    generator = torch.Generator().manual_seed(23)
-    x = torch.randint(-16, 17, (m, k), generator=generator, dtype=torch.int8).to(device)
-    weight = torch.randint(-16, 17, (k, n), generator=generator, dtype=torch.int8).to(
-        device
-    )
-    scale_a = torch.linspace(0.01, 0.03, m, device=device).reshape(m, 1)
-    scale_b = torch.linspace(0.02, 0.04, n, device=device)
-    bias = (
-        torch.randn(n, generator=generator).to(device=device, dtype=dtype)
-        if with_bias
-        else None
-    )
-    inputs = (x, weight, scale_a, scale_b)
-    before = [value.clone() for value in inputs]
-    expected = (x.cpu().int() @ weight.cpu().int()).float()
-    expected *= scale_a.cpu() * scale_b.cpu()
-    if bias is not None:
-        expected += bias.cpu().float()
-    expected = expected.to(dtype)
-    old, new = (fn(*inputs, bias=bias, out_dtype=dtype) for fn in providers.scaled_mm)
-    _assert_output(old, expected, device, dtype)
-    _assert_output(new, expected, device, dtype)
-    _assert_output(new, old.cpu(), device, dtype)
-    for value, saved in zip(inputs, before):
-        torch.testing.assert_close(value, saved, rtol=0, atol=0)

@@ -155,12 +155,12 @@ def test_w8a8_linear_quantizes_then_calls_flaggems_scaled_mm(monkeypatch):
         "_dynamic_per_token_quant_int8",
         lambda value: (x_q, x_scale),
     )
+    flag_gems = ModuleType("flag_gems")
 
     def fake_scaled_mm(*args, **kwargs):
         calls.append((args, kwargs))
         return expected
 
-    flag_gems = ModuleType("flag_gems")
     flag_gems.scaled_mm = fake_scaled_mm
     monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
 
@@ -257,6 +257,7 @@ def test_w8a8_linear_weight_layout_and_numerics_match_flaggems_contract(
         "_dynamic_per_token_quant_int8",
         dynamic_per_token_quant_int8,
     )
+    flag_gems = ModuleType("flag_gems")
 
     def fake_scaled_mm(
         x_q,
@@ -277,7 +278,6 @@ def test_w8a8_linear_weight_layout_and_numerics_match_flaggems_contract(
             output += bias.reshape(1, -1)
         return output.to(out_dtype)
 
-    flag_gems = ModuleType("flag_gems")
     flag_gems.scaled_mm = fake_scaled_mm
     monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
 
