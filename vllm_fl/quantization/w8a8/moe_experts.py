@@ -17,8 +17,6 @@ from __future__ import annotations
 import torch
 import torch.nn.functional as F
 
-import vllm_fl.envs as fl_envs
-
 import vllm.model_executor.layers.fused_moe.modular_kernel as mk
 from vllm.model_executor.layers.fused_moe.activation import MoEActivation
 from vllm.model_executor.layers.fused_moe.experts.triton_moe import (
@@ -31,10 +29,7 @@ from vllm.model_executor.layers.fused_moe.fused_moe import (
 
 def _flaggems_fused_experts_impl(**kwargs) -> torch.Tensor:
     """Resolve FlagGems lazily after the platform runtime is initialized."""
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import fused_experts_impl
-    else:
-        from flag_gems import fused_experts_impl
+    from flaggems_vllm import fused_experts_impl
 
     return fused_experts_impl(**kwargs)
 

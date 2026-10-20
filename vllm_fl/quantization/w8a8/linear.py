@@ -17,8 +17,6 @@ from __future__ import annotations
 
 import torch
 
-import vllm_fl.envs as fl_envs
-
 from vllm.model_executor.kernels.linear import (
     Int8ScaledMMLinearKernel,
     Int8ScaledMMLinearLayerConfig,
@@ -101,10 +99,7 @@ class FLW8A8DynamicLinearKernel(Int8ScaledMMLinearKernel):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-            from flaggems_vllm import triton_scaled_mm as scaled_mm
-        else:
-            from flag_gems import scaled_mm
+        from flaggems_vllm import triton_scaled_mm as scaled_mm
 
         weight, weight_scale, _, _, _ = self._get_layer_params(layer)
         original_shape = x.shape

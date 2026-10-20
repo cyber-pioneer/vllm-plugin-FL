@@ -7,12 +7,7 @@
 from typing import Optional, Union
 
 import torch
-
-from vllm.v1.attention.backend import (
-    AttentionLayer,
-    AttentionType,
-)
-from vllm.utils.torch_utils import is_quantized_kv_cache
+from flaggems_vllm import flash_attn_varlen_func, flash_mla
 
 # from vllm.attention.ops.triton_decode_attention import decode_attention_fwd
 # from vllm.attention.ops.triton_flash_attention import triton_attention
@@ -22,13 +17,11 @@ from vllm.model_executor.layers.attention.mla_attention import (
     MLACommonImpl,
     MLACommonMetadata,
 )
-
-import vllm_fl.envs as fl_envs
-
-if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-    from flaggems_vllm import flash_attn_varlen_func, flash_mla
-else:
-    from flag_gems import flash_attn_varlen_func, flash_mla
+from vllm.utils.torch_utils import is_quantized_kv_cache
+from vllm.v1.attention.backend import (
+    AttentionLayer,
+    AttentionType,
+)
 
 logger = init_logger(__name__)
 

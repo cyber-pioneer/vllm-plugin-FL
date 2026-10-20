@@ -80,8 +80,6 @@ def _install_fake_flaggems(
     vendor_name="ascend",
     use_c_extension=False,
 ):
-    # These tests exercise the original vendor-specific FlagGems wrappers.
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", "0")
     flag_gems = ModuleType("flag_gems")
     flag_gems.__path__ = []
     flag_gems.apply_rotary_pos_emb = apply_rotary
@@ -89,18 +87,13 @@ def _install_fake_flaggems(
 
     config = ModuleType("flag_gems.config")
     config.use_c_extension = use_c_extension
-    modules = ModuleType("flag_gems.modules")
-    modules.__path__ = []
-    rotary = ModuleType("flag_gems.modules.rotary_embedding")
-    rotary.gems_rope_forward = common_rotary
+    fused = ModuleType("flaggems_vllm")
+    fused.apply_rotary_pos_emb = common_rotary
 
     flag_gems.config = config
-    flag_gems.modules = modules
-    modules.rotary_embedding = rotary
     monkeypatch.setitem(sys.modules, "flag_gems", flag_gems)
     monkeypatch.setitem(sys.modules, "flag_gems.config", config)
-    monkeypatch.setitem(sys.modules, "flag_gems.modules", modules)
-    monkeypatch.setitem(sys.modules, "flag_gems.modules.rotary_embedding", rotary)
+    monkeypatch.setitem(sys.modules, "flaggems_vllm", fused)
 
 
 def test_reference_interleaved_rotary_repeats_adjacent_cache_values():
@@ -383,11 +376,10 @@ def test_flaggems_six_argument_rotary_preserves_inplace_contract(monkeypatch):
     assert len(calls) == 3
 
 
-@pytest.mark.parametrize("mode", ["0", "1"])
 @pytest.mark.parametrize("inplace", [False, True])
 @pytest.mark.parametrize("interleaved", [False, True])
 def test_flaggems_six_argument_rotary_compacts_packed_partial_views(
-    monkeypatch, inplace, interleaved, mode
+    monkeypatch, inplace, interleaved
 ):
     def ascend_apply_rotary_pos_emb(
         query, key, cos, sin, position_ids=None, rotary_interleaved=False
@@ -411,7 +403,6 @@ def test_flaggems_six_argument_rotary_compacts_packed_partial_views(
         ascend_apply_rotary_pos_emb,
         lambda *args, **kwargs: pytest.fail("unexpected common RoPE wrapper"),
     )
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", mode)
     flaggems_rotary._supports_inplace_argument.cache_clear()
 
     # Q and K use only the first eight dimensions of packed QKV heads. The

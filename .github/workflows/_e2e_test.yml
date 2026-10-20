@@ -55,11 +55,6 @@ on:
         required: false
         type: string
         default: ""
-      flaggems_vllm:
-        description: "Optional fused operator mode for CUDA model gates (0 or 1)"
-        required: false
-        type: string
-        default: ""
       timeout:
         description: "Timeout for the job in minutes"
         required: false
@@ -73,7 +68,7 @@ on:
 
 jobs:
   e2e-test:
-    name: "E2E ${{ inputs.task }} (${{ inputs.platform }}/${{ inputs.device }})${{ inputs.flaggems_vllm != '' && format(' fused={0}', inputs.flaggems_vllm) || '' }}"
+    name: "E2E ${{ inputs.task }} (${{ inputs.platform }}/${{ inputs.device }})"
     runs-on: ${{ fromJson(inputs.runner_labels) }}
     timeout-minutes: ${{ inputs.timeout }}
     container:
@@ -103,15 +98,6 @@ jobs:
         if: inputs.platform == 'cuda' && inputs.device == 'h20'
         run: echo 'NCCL_NVLS_ENABLE=0' >> "$GITHUB_ENV"
 
-      - name: Select fused operator mode
-        if: inputs.platform == 'cuda' && inputs.flaggems_vllm != ''
-        env:
-          FUSED_MODE: ${{ inputs.flaggems_vllm }}
-        run: |
-          case "$FUSED_MODE" in 0|1) ;; *) exit 1 ;; esac
-          echo "VLLM_FL_USE_FLAGGEMS_VLLM=$FUSED_MODE" >> "$GITHUB_ENV"
-          echo "Model gate: VLLM_FL_USE_FLAGGEMS_VLLM=$FUSED_MODE"
-
       - name: Install project
         run: bash .github/scripts/${{ inputs.platform }}/setup.sh
 
@@ -137,7 +123,7 @@ jobs:
         uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
-          name: e2e-${{ inputs.platform }}-${{ inputs.device }}-${{ inputs.task }}${{ inputs.flaggems_vllm != '' && format('-fused-{0}', inputs.flaggems_vllm) || '' }}
+          name: e2e-${{ inputs.platform }}-${{ inputs.device }}-${{ inputs.task }}
           path: |
             test-results-${{ inputs.platform }}.xml
             test-results-${{ inputs.platform }}.json

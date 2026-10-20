@@ -11,16 +11,14 @@ from vllm_fl.dispatch.backends.flaggems.impl.fused_moe import (
 )
 
 
-def _install_topk_softmax(monkeypatch, kernel, mode):
-    monkeypatch.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", mode)
-    provider = "flaggems_vllm" if mode == "1" else "flag_gems"
+def _install_topk_softmax(monkeypatch, kernel):
+    provider = "flaggems_vllm"
     module = ModuleType(provider)
     module.topk_softmax = kernel
     monkeypatch.setitem(sys.modules, provider, module)
 
 
-@pytest.mark.parametrize("mode", ["0", "1"])
-def test_topk_softmax_supports_legacy_signature(monkeypatch, mode):
+def test_topk_softmax_supports_legacy_signature(monkeypatch):
     calls = []
 
     def legacy_kernel(weights, indices, token_indices, logits):
@@ -28,7 +26,7 @@ def test_topk_softmax_supports_legacy_signature(monkeypatch, mode):
         weights.copy_(torch.tensor([[0.125, 0.375]]))
         indices.copy_(torch.tensor([[1, 2]], dtype=indices.dtype))
 
-    _install_topk_softmax(monkeypatch, legacy_kernel, mode)
+    _install_topk_softmax(monkeypatch, legacy_kernel)
     weights = torch.empty((1, 2))
     indices = torch.empty((1, 2), dtype=torch.int32)
     logits = torch.zeros((1, 3))
@@ -45,10 +43,7 @@ def test_topk_softmax_supports_legacy_signature(monkeypatch, mode):
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, ValueError])
-@pytest.mark.parametrize("mode", ["0", "1"])
-def test_topk_softmax_propagates_backend_errors_without_retry(
-    monkeypatch, error_type, mode
-):
+def test_topk_softmax_propagates_backend_errors_without_retry(monkeypatch, error_type):
     calls = []
     error = error_type("topk backend failure")
 
@@ -56,7 +51,7 @@ def test_topk_softmax_propagates_backend_errors_without_retry(
         calls.append(args)
         raise error
 
-    _install_topk_softmax(monkeypatch, failing_kernel, mode)
+    _install_topk_softmax(monkeypatch, failing_kernel)
 
     with pytest.raises(error_type, match="topk backend failure") as caught:
         topk_softmax_flaggems(

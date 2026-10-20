@@ -11,8 +11,6 @@ import inspect
 
 import torch
 
-import vllm_fl.envs as fl_envs
-
 
 @functools.cache
 def _supports_inplace_argument(fn) -> bool:
@@ -84,10 +82,7 @@ def rotary_embedding_flaggems(
             return query, key
         return q_embed, k_embed
 
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import apply_rotary_pos_emb as gems_rope_forward
-    else:
-        from flag_gems.modules.rotary_embedding import gems_rope_forward
+    from flaggems_vllm import apply_rotary_pos_emb as gems_rope_forward
 
     return gems_rope_forward(
         query,

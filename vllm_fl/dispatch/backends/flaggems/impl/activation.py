@@ -8,8 +8,6 @@ from __future__ import annotations
 
 import torch
 
-import vllm_fl.envs as fl_envs
-
 
 def silu_and_mul_flaggems(obj, x: torch.Tensor) -> torch.Tensor:
     """
@@ -22,10 +20,7 @@ def silu_and_mul_flaggems(obj, x: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor of shape [..., d]
     """
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import silu_and_mul as gems_silu_and_mul
-    else:
-        from flag_gems.modules.activation import gems_silu_and_mul
+    from flaggems_vllm import silu_and_mul as gems_silu_and_mul
 
     d = x.shape[-1] // 2
     x1, x2 = x[..., :d], x[..., d:]
@@ -43,10 +38,7 @@ def gelu_and_mul_flaggems(obj, x: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor of shape [..., d]
     """
-    if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-        from flaggems_vllm import gelu_and_mul
-    else:
-        from flag_gems.fused import gelu_and_mul
+    from flaggems_vllm import gelu_and_mul
 
     approximate = getattr(obj, "approximate", "none") if obj is not None else "none"
     d = x.shape[-1] // 2

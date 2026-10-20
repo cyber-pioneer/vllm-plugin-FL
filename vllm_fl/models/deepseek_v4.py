@@ -448,12 +448,7 @@ def _install_hc_head_fallback() -> None:
         rms_norm_eps,
         hc_eps,
     ):
-        import vllm_fl.envs as fl_envs
-
-        if fl_envs.VLLM_FL_USE_FLAGGEMS_VLLM:
-            from flaggems_vllm import hc_head_fused_kernel
-        else:
-            from flag_gems.fused.mhc import hc_head_fused_kernel
+        from flaggems_vllm import hc_head_fused_kernel
 
         hc_mult, hidden_size = hidden_states.shape[-2:]
         flat = hidden_states.reshape(-1, hc_mult, hidden_size)

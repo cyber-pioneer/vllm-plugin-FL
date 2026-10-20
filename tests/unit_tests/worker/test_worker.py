@@ -174,8 +174,7 @@ def test_nvidia_platform_keeps_native_cuda_semantics():
 
 @skip_if_not_nvidia
 @skip_if_no_native_cuda_ext
-@pytest.mark.parametrize("fused_mode", ["0", "1"])
-def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch, fused_mode):
+def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch):
     pytest.importorskip("vllm._C_stable_libtorch", exc_type=ImportError)
     from types import SimpleNamespace
     from unittest.mock import patch
@@ -196,7 +195,6 @@ def test_nvidia_platform_selects_target_version_worker_wrapper(monkeypatch, fuse
     with monkeypatch.context() as state:
         state.setattr(NvidiaPlatformFL, "dist_backend", NvidiaPlatformFL.dist_backend)
         state.delenv("FLAGCX_PATH", raising=False)
-        state.setenv("VLLM_FL_USE_FLAGGEMS_VLLM", fused_mode)
         with patch.object(CudaPlatform, "check_and_update_config") as native_update:
             NvidiaPlatformFL.check_and_update_config(vllm_config)
 

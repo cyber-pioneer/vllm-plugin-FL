@@ -1,8 +1,8 @@
-# Optional FlagGems-vllm operators
+# FlagGems-vllm operators
 
-`VLLM_FL_USE_FLAGGEMS_VLLM` selects the provider for compatible, explicit
-FlagGems operator imports migrated by this change. It defaults to `0`;
-`flag_gems.enable()` continues to own ATen registration in both modes. The
+Compatible, explicit FlagGems operator imports use FlagGems-vllm directly.
+No environment variable or opt-in is required. `flag_gems.enable()` continues
+to own ATen registration. The
 native vLLM 0.28 runner and graph mode are retained. NVIDIA CI uses FlagGems
 v5.4.0 at commit `6ed2f39071ef85db26b7e64f0652a162f434959c` and retains the
 baseline NVIDIA blacklist, without the migration's temporary `mm` exclusion.
@@ -20,7 +20,6 @@ In a container with this checkout mounted at `/workspace/vllm-plugin-FL`:
 ```bash
 cd /workspace/vllm-plugin-FL
 bash .github/scripts/cuda/setup.sh
-export VLLM_FL_USE_FLAGGEMS_VLLM=1
 ```
 
 The installer pins FlagGems-vllm **v0.2.0**, commit
@@ -32,12 +31,7 @@ versions are preserved by that installer. NVIDIA CI first upgrades only
 FlagGems to tag `v5.4.0` with `--no-deps --no-build-isolation` and verifies its
 Git provenance; the remaining image runtime packages are preserved.
 
-Use `-e VLLM_FL_USE_FLAGGEMS_VLLM=1` when starting a Docker container. Unset the
-variable or set it to `0` before starting a new process to use the original
-providers for these migrated calls. Enabling this variable requires the
-FlagGems-vllm package. The pre-existing dynamic INT8 quantization path already
-calls FlagGems-vllm independently of this switch, so `0` is not a process-wide
-disable of that package.
+The pinned FlagGems-vllm package is required for the migrated providers.
 
 ## Confirm activation
 
@@ -45,7 +39,7 @@ The worker logs the following once per process after successfully importing
 the package during FlagGems backend registration:
 
 ```text
-FlagGems-vllm integration activated: VLLM_FL_USE_FLAGGEMS_VLLM=1, package=...
+FlagGems-vllm integration activated: package=...
 ```
 
 This confirms provider activation. Per-operator dispatch policy can still
@@ -63,14 +57,13 @@ Dynamic per-token INT8 quantization retains its baseline dispatch chain:
 FlagGems-vllm `scaled_int8_quant`, then the in-tree Triton implementation,
 then the PyTorch reference if dispatch falls back after an error. The local
 Triton kernel and the existing FlagGems-vllm entry are unchanged; neither is
-part of this interface migration or controlled by the new switch.
+part of this interface migration.
 
-The switch changes the provider of existing explicit operator calls. It does
+The migration changes the provider of existing explicit operator calls. It does
 not enable OOT activations, change `compilation_config.custom_ops`, or add
 custom compilation boundaries. Upstream vLLM and the existing dispatch policy
-continue to decide which operator entry points execute. When the upstream
-configuration selects native activation formulas in graph mode, enabling this
-switch does not force those formulas through FlagGems-vllm.
+continue to decide which operator entry points execute. Native activation
+formulas in graph mode are not forced through FlagGems-vllm.
 
 See [interfaces retained from FlagGems](flaggems-vllm-unsupported-ops.md) for
 missing or incompatible APIs. Device detection, runtime helpers, and the
@@ -78,23 +71,19 @@ validated Ascend vendor paths retain their existing implementations.
 
 ## CI and local verification
 
-Every platform's setup installs the pinned optional package. All nine platform
-CI configs, including Ascend, set `VLLM_FL_USE_FLAGGEMS_VLLM=1`. Platform CI
-enable/disable settings are preserved; a disabled platform remains disabled.
-THead also sets the switch in its test job environment so repository overrides
-of its container options do not remove the opt-in. Only NVIDIA CI updates
-FlagGems to v5.4.0; the other platforms retain their vendor runtime versions.
+Every platform's setup installs the pinned package. Platform CI enable/disable
+settings are preserved; a disabled platform remains disabled. Only NVIDIA CI
+updates FlagGems to v5.4.0; other platforms retain their vendor runtime versions.
+CUDA E2E executes each original model/task/device group once with the direct
+FlagGems-vllm providers.
 
-CUDA E2E matrices execute the original cases with both switch values, with
-separate job and artifact names. Locally, run the same tests in new processes:
+Run the same tests without provider-selection environment variables:
 
 ```bash
-VLLM_FL_USE_FLAGGEMS_VLLM=0 python3 tests/run.py --platform cuda --scope unit
-VLLM_FL_USE_FLAGGEMS_VLLM=1 python3 tests/run.py --platform cuda --scope unit
-VLLM_FL_USE_FLAGGEMS_VLLM=0 python3 tests/run.py --platform cuda --scope functional
-VLLM_FL_USE_FLAGGEMS_VLLM=1 python3 tests/run.py --platform cuda --scope functional
+python3 tests/run.py --platform cuda --scope unit
+python3 tests/run.py --platform cuda --scope functional
 ```
 
-For real models, repeat the [adaptation gate](../tools/adaptation-gate-cases/README.md)
-in eager and graph modes for each switch value, retaining separate results.
-NVIDIA validation does not establish correctness on another vendor's runtime.
+For real models, run the [adaptation gate](../tools/adaptation-gate-cases/README.md)
+in eager and graph modes. NVIDIA validation does not establish correctness on
+another vendor's runtime.

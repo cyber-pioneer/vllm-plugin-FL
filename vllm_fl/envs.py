@@ -12,9 +12,6 @@ fl_vllm_environment_variables: dict[str, Callable[[], Any]] = {
     "FLAGGEMS_ENABLE_OPLIST_PATH": lambda: os.environ.get(
         "FLAGGEMS_ENABLE_OPLIST_PATH", "/tmp/flaggems_enable_oplist.txt"
     ),
-    "VLLM_FL_USE_FLAGGEMS_VLLM": lambda: (
-        os.environ.get("VLLM_FL_USE_FLAGGEMS_VLLM", "0").lower() in ("true", "1")
-    ),
     "USE_FLAGGEMS": use_flaggems,
 }
 
