@@ -8,7 +8,6 @@ contract. The entries below retain their original providers. Missing interface r
 
 | Interface | Call site | Reason |
 | --- | --- | --- |
-| `scaled_mm` | `vllm_fl/quantization/w8a8/linear.py` | TODO: migrate when FlagGems-vllm exposes a compatible API. `triton_scaled_mm` changes parameter order/defaults and optional arguments; `cutlass_scaled_mm` uses a preallocated output buffer. Preserve the original FlagGems import and call. |
 | `gems_rms_forward` | `vllm_fl/dispatch/backends/flaggems/impl/normalization.py` | The standalone/residual RMSNorm wrapper is not exported. Combining other kernels would require output and mutation-contract adaptation. |
 | `pack_rhs_qsi4c128p` | `vllm_fl/quantization/arm_cpu_w4a8.py` | No corresponding ARM W4A8 packing export exists. |
 | `w4a8_g128_linear` | `vllm_fl/quantization/arm_cpu_w4a8.py` | No corresponding ARM W4A8 execution export exists. |
@@ -17,8 +16,10 @@ contract. The entries below retain their original providers. Missing interface r
 | Ascend six-argument `apply_rotary_pos_emb` without the C extension | `vllm_fl/dispatch/backends/flaggems/impl/rotary.py` | The generic v0.2.0 in-place export returns new Tensor views, violating this branch's Q/K object-identity contract for packed partial-RoPE views (Ascend CI job 118173438493). Retain the existing Ascend compatibility path unchanged; no new copy or conversion adapter is introduced. |
 | Ascend vendor-specific FLA/MoE implementations | `vllm_fl/dispatch/backends/vendor/ascend/` | Preserve the independently validated vLLM 0.28 Ascend implementation. Compatible generic imports use FlagGems-vllm directly; these vendor-specific implementations remain unchanged. |
 
-ATen registration (`flag_gems.enable()`), device detection, runtime utilities,
-and backend launch/configuration helpers remain in FlagGems. They are not
-explicit fused-operator replacements. The existing native CUDA attention
+ATen registration (`flag_gems.enable()`) and ATen operator APIs such as
+`flag_gems.scaled_mm` remain in FlagGems. `scaled_mm` is outside this fused-operator
+migration and is not listed as a missing or pending migration interface. Device
+detection, runtime utilities, and backend launch/configuration helpers also
+retain their existing providers. The existing native CUDA attention
 selection is preserved. The NVIDIA policy retains its baseline ATen exclusions; `mm` and `mm_out`
 are enabled under the default policy with FlagGems v5.4.0.

@@ -99,8 +99,8 @@ class FLW8A8DynamicLinearKernel(Int8ScaledMMLinearKernel):
         x: torch.Tensor,
         bias: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        # TODO: Migrate when FlagGems-vllm provides a compatible scaled_mm API.
-        # Its current scaled GEMM exports do not preserve this interface.
+        # scaled_mm is an ATen operator, outside the fused-operator migration.
+        # Keep the original FlagGems provider and call contract.
         from flag_gems import scaled_mm
 
         weight, weight_scale, _, _, _ = self._get_layer_params(layer)

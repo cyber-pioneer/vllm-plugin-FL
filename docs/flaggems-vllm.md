@@ -50,9 +50,10 @@ export lookup alone does not prove that a model executed a particular kernel.
 
 Compatible activation, attention/cache, MLA, RoPE, MoE and fused-experts calls
 use existing FlagGems-vllm exports with the existing arguments. W8A8 linear
-retains `flag_gems.scaled_mm`: FlagGems-vllm currently has no compatible
-replacement API. A TODO marks this call for future migration. This migration
-adds no state-layout converters or composite fallback operators.
+retains `flag_gems.scaled_mm`: it is an ATen operator and is outside this
+fused-operator migration, rather than an interface awaiting migration. Its
+original provider and call contract remain unchanged. This migration adds no
+state-layout converters or composite fallback operators.
 
 Dynamic per-token INT8 quantization retains its baseline dispatch chain:
 FlagGems-vllm `scaled_int8_quant`, then the in-tree Triton implementation,

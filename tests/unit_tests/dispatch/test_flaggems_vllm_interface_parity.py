@@ -1,7 +1,8 @@
 # Copyright 2026 FlagOS Contributors
-"""Compare migrated APIs and a deferred GEMM candidate with NVIDIA FlagGems.
+"""Compare operator call subsets against the NVIDIA FlagGems baseline.
 
-Scaled GEMM remains on FlagGems until a compatible replacement is available.
+ATen scaled_mm remains on FlagGems, outside the fused-operator migration.
+Its comparisons below are numerical reference checks, not migration gates.
 These comparisons cover the plugin's call subset, not equivalence of every
 optional argument or vendor implementation. Ascend's retained RoPE path has
 its own contract tests in test_ascend_rotary.py.
